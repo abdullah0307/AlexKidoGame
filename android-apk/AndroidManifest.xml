@@ -1,0 +1,22 @@
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.alexkido.remake"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+    <application
+        android:theme="@style/AppTheme"
+        android:label="Alex Kido Remake"
+        android:usesCleartextTraffic="false"
+        android:resizeableActivity="true">
+        <activity
+            android:name="com.alexkido.remake.MainActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
+            android:exported="true"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

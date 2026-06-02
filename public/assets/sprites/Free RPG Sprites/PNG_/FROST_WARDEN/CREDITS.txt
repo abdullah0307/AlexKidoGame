@@ -1,0 +1,17 @@
+Frost Warden enemy avatar generated from Universal LPC Spritesheet Generator assets.
+
+Source generator:
+https://liberatedpixelcup.github.io/Universal-LPC-Spritesheet-Character-Generator/
+
+Source repository:
+https://github.com/LiberatedPixelCup/Universal-LPC-Spritesheet-Character-Generator
+
+Selected LPC layers:
+- male body base
+- male plate torso armor
+- male plate leg armor
+- male steel plate boots
+- male blue cape
+- steel dragonspear attack layer
+
+The LPC generator project notes that generated sprites require credit for the selected artwork and may include assets under CC0, CC-BY-SA, CC-BY, OGA-BY, and/or GPL licenses. Keep the detailed LPC credits discoverable with the game before distribution.
