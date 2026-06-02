@@ -78,6 +78,8 @@ type Player = Entity & {
   fireCooldown: number;
   power: number;
   dropping: number;
+  dead: number;
+  deadFall: boolean;
   longJump: number;
   freeze: number;
 };
@@ -442,6 +444,8 @@ const makePlayer = (): Player => ({
   fireCooldown: 0,
   power: MAX_POWER,
   dropping: 0,
+  dead: 0,
+  deadFall: false,
   longJump: 0,
   freeze: 0,
 });
@@ -1195,6 +1199,7 @@ export default function Home() {
   const [titleMusicOn, setTitleMusicOn] = useState(false);
   const [screen, setScreen] = useState<GameScreen>("menu");
   const [menuScreen, setMenuScreen] = useState<MenuScreen>("main");
+  const [gameOver, setGameOver] = useState(false);
   const [hasProgress, setHasProgress] = useState(false);
   const [levelLabel, setLevelLabel] = useState(`${WORLD_LEVELS[0].id}: ${WORLD_LEVELS[0].name}`);
   const [loadingInfo, setLoadingInfo] = useState<LoadingInfo>({
@@ -1449,6 +1454,7 @@ export default function Home() {
 
   const loadLevel = useCallback((stage: number, keepProgress = true) => {
     stopBossMusic();
+    setGameOver(false);
     const nextStage = Math.max(0, Math.min(WORLD_LEVELS.length - 1, stage));
     const nextLevel = makeLevel(nextStage);
     const previousFire = player.current.fire;
@@ -1492,6 +1498,7 @@ export default function Home() {
   const startLevelLoading = useCallback(
     (stage: number, keepProgress = true) => {
       clearLoadingTimers();
+      setGameOver(false);
       const nextStage = Math.max(0, Math.min(WORLD_LEVELS.length - 1, stage));
       const nextLevel = WORLD_LEVELS[nextStage] ?? WORLD_LEVELS[0];
       const world = WORLD_DEFINITIONS[worldIndexForStage(nextStage)] ?? WORLD_DEFINITIONS[0];
@@ -1525,9 +1532,16 @@ export default function Home() {
   );
 
   const restart = useCallback(() => {
+    setGameOver(false);
     startAudio();
     setHasProgress(true);
     startLevelLoading(0, false);
+  }, [startAudio, startLevelLoading]);
+
+  const restartLevel = useCallback(() => {
+    setGameOver(false);
+    startAudio();
+    startLevelLoading(currentLevel.current, false);
   }, [startAudio, startLevelLoading]);
 
   const startNewGame = useCallback(() => {
@@ -1551,6 +1565,7 @@ export default function Home() {
 
   const returnToMenu = useCallback(() => {
     clearLoadingTimers();
+    setGameOver(false);
     keys.current = { left: false, right: false, jump: false, kick: false, fire: false };
     stopAudio();
     setScreen("menu");
@@ -1575,50 +1590,52 @@ export default function Home() {
   }, [startAudio, stopAudio]);
 
   const loseLife = useCallback(() => {
+    const p = player.current;
     const nextLives = Math.max(0, hudRef.current.lives - 1);
-    const previousFire = player.current.fire;
-    playSound(nextLives ? "hurt" : "lose");
-    setHud((value) => ({ ...value, lives: nextLives, message: nextLives ? "Careful. Try again." : "Game over. Restart to play." }));
-    if (nextLives === 0) {
-      // Keep player on-screen and show death animation state on game over.
-      const p = player.current;
-      player.current = {
-        ...p,
-        vx: 0,
-        vy: 0,
-        attack: 0,
-        grounded: true,
-        hurt: 0,
-        fireCooldown: 0,
-        longJump: 0,
-        freeze: 0,
-      };
+    const previousFire = p.fire;
+    const shouldGameOver = nextLives === 0;
+    playSound(shouldGameOver ? "lose" : "hurt");
+    setGameOver(shouldGameOver);
+    setHud((value) => ({
+      ...value,
+      lives: nextLives,
+      message: shouldGameOver
+        ? "Game over. Restart level or quit to menu."
+        : `Careful. ${nextLives} heart${nextLives === 1 ? "" : "s"} left.`,
+    }));
+    if (shouldGameOver) {
+      p.dead = 1;
+      p.deadFall = !p.grounded;
+      p.vx = 0;
+      p.vy = p.deadFall ? Math.max(2, p.vy) : 0;
+      p.attack = 0;
+      p.hurt = 0;
+      p.fireCooldown = 0;
+      p.longJump = 0;
+      p.freeze = 0;
+      p.dropping = 0;
+      p.grounded = !p.deadFall;
     } else {
-      player.current = { ...makePlayer(), x: checkpoint.current.x, y: checkpoint.current.y, fire: previousFire, hurt: 70 };
+      player.current = {
+        ...makePlayer(),
+        x: checkpoint.current.x,
+        y: checkpoint.current.y,
+        fire: previousFire,
+        hurt: 70,
+      };
     }
+    keys.current = { left: false, right: false, jump: false, kick: false, fire: false };
     projectiles.current = [];
   }, [playSound]);
 
   const dropAndRespawn = useCallback(() => {
-    const p = player.current;
-    if (p.dropping > 0) return;
-    p.dropping = 90;
-    p.hurt = 90;
-    p.power = 0;
-    p.vx = 0;
-    p.vy = -4;
-    keys.current = { left: false, right: false, jump: false, kick: false, fire: false };
-    playSound("hurt");
-    setHud((value) => ({ ...value, message: "Power empty. Falling back..." }));
-    window.setTimeout(() => {
-      loseLife();
-    }, 1400);
-  }, [loseLife, playSound]);
+    loseLife();
+  }, [loseLife]);
 
   const damagePlayer = useCallback(
     (amount = ENEMY_DAMAGE, sourceX?: number) => {
       const p = player.current;
-      if (p.hurt > 0 || p.dropping > 0) return;
+      if (p.hurt > 0 || p.dropping > 0 || p.dead > 0) return;
       p.power = Math.max(0, p.power - amount);
       p.hurt = 48;
       const playerCenter = p.x + p.w / 2;
@@ -1652,6 +1669,11 @@ export default function Home() {
         if (key === "enter" || key === " ") startNewGame();
         if (key === "c") continueGame();
         if (key === "m" && !event.repeat) toggleTitleMusic();
+        return;
+      }
+      if (screen === "playing" && gameOver) {
+        if (key === "r" && !event.repeat) restartLevel();
+        if (key === "escape" || key === "q") returnToMenu();
         return;
       }
       if (screen === "loading") {
@@ -1692,7 +1714,7 @@ export default function Home() {
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", resetKeys);
     };
-  }, [continueGame, restart, screen, startAudio, startNewGame, toggleAudio, toggleTitleMusic]);
+  }, [continueGame, gameOver, restart, restartLevel, returnToMenu, screen, startAudio, startNewGame, toggleAudio, toggleTitleMusic]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1704,9 +1726,9 @@ export default function Home() {
       ctx.fillStyle = color;
       ctx.fillRect(Math.round(x - camera.current), Math.round(y), w, h);
     };
-    const drawSprite = (anim: AnimName, frame: number, x: number, y: number, w: number, h: number, face = 1) => {
+    const drawSprite = (anim: AnimName, frame: number, x: number, y: number, w: number, h: number, face = 1, freezeLastFrame = false) => {
       const loadedFrames = images.current[anim]?.filter((image) => image.complete && image.naturalWidth);
-      const image = loadedFrames?.[frame % loadedFrames.length];
+      const image = loadedFrames?.[freezeLastFrame ? loadedFrames.length - 1 : frame % loadedFrames.length];
       if (!image) return false;
 
       ctx.save();
@@ -3086,8 +3108,20 @@ export default function Home() {
       if (boss.current) drawBoss(boss.current, frame, p.x);
 
       const playerAnim: AnimName =
-        hud.lives <= 0 ? "dead" : p.hurt > 0 ? "hurt" : p.attack > 0 ? "kick" : !p.grounded && p.vy < 0 ? "jump" : !p.grounded ? "fall" : Math.abs(p.vx) > 0 ? "run" : "idle";
-      const playerDrawn = drawSprite(playerAnim, frame, p.x - 35, p.y - 32, 114, 104, -p.face);
+        p.dead > 0 || gameOver
+          ? "dead"
+          : p.hurt > 0
+            ? "hurt"
+            : p.attack > 0
+              ? "kick"
+              : !p.grounded && p.vy < 0
+                ? "jump"
+                : !p.grounded
+                  ? "fall"
+                  : Math.abs(p.vx) > 0
+                    ? "run"
+                    : "idle";
+      const playerDrawn = drawSprite(playerAnim, frame, p.x - 35, p.y - 32, 114, 104, -p.face, playerAnim === "dead");
       if (!playerDrawn) drawFallbackHero(p);
       if (p.freeze > 0) {
         ctx.fillStyle = "rgba(169,238,255,.22)";
@@ -3134,29 +3168,50 @@ export default function Home() {
         }
       }
 
-      if (won || hud.lives === 0) {
-        ctx.fillStyle = "rgba(0,0,0,.58)";
-        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      if (won || gameOver) {
+        if (won) {
+          ctx.fillStyle = "rgba(0,0,0,.58)";
+          ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        }
         ctx.fillStyle = "#fff";
         ctx.font = "800 44px Arial";
         ctx.textAlign = "center";
         ctx.fillText(won ? "Castle Cleared" : "Game Over", WIDTH / 2, 245);
         ctx.font = "600 21px Arial";
-        ctx.fillText("Press Restart to play again", WIDTH / 2, 285);
+        ctx.fillText(won ? "Press Restart to play again" : "Use Restart Level or Quit", WIDTH / 2, 285);
         ctx.textAlign = "left";
       }
     };
 
     const tick = () => {
-      if (screen === "playing" && !won && hud.lives > 0) {
+      if (screen === "playing" && !won) {
         const p = player.current;
         const map = level.current;
         const wasGrounded = p.grounded;
-        if (p.dropping > 0) {
-          p.dropping = Math.max(0, p.dropping - 1);
-          p.vy += GRAVITY;
-          p.y += p.vy;
-          p.hurt = Math.max(1, p.hurt - 1);
+        if (gameOver) {
+          if (p.dead > 0 && p.deadFall) {
+            p.vy += GRAVITY;
+            p.y += p.vy;
+            p.x = Math.max(0, Math.min(LEVEL_END, p.x));
+
+            const allSolids = [...map.platforms, ...map.bridges, ...bossPillars.current, ...movingLifts.current];
+            let landed = false;
+            allSolids.forEach((plat) => {
+              if (!landed && overlaps(p, plat) && p.vy >= 0 && p.y + p.h - p.vy <= plat.y + 8) {
+                p.y = plat.y - p.h;
+                p.vy = 0;
+                p.grounded = true;
+                p.deadFall = false;
+                landed = true;
+              }
+            });
+            if (!landed && p.y + p.h >= HEIGHT - 56) {
+              p.y = HEIGHT - 56 - p.h;
+              p.vy = 0;
+              p.grounded = true;
+              p.deadFall = false;
+            }
+          }
           draw();
           raf.current = requestAnimationFrame(tick);
           return;
@@ -3984,7 +4039,7 @@ export default function Home() {
 
     raf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf.current);
-  }, [assetsReady, damagePlayer, hud, loseLife, playSound, screen, soundOn, startBossMusic, startLevelLoading, stopBossMusic, won]);
+  }, [assetsReady, damagePlayer, gameOver, hud, loseLife, playSound, screen, soundOn, startBossMusic, startLevelLoading, stopBossMusic, won]);
 
   const press = (key: ButtonKey, active: boolean) => {
     if (screen !== "playing") return;
@@ -4004,7 +4059,7 @@ export default function Home() {
     <main className="game-shell">
       <section className="game-stage" aria-label="Alex Kido Remake platform game" onClick={clickFire}>
         <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} />
-        {screen === "playing" && (
+        {screen === "playing" && !gameOver && (
           <div className="top-actions" onClick={(event) => event.stopPropagation()}>
             <h1>{levelLabel}</h1>
             <div className="top-buttons">
@@ -4025,7 +4080,7 @@ export default function Home() {
             <span>{coreLoop.hud.runTimeLabel}</span>
           </aside>
         )}
-        {screen === "playing" && (
+        {screen === "playing" && !gameOver && (
           <div className="controls" aria-label="Touch controls" onClick={(event) => event.stopPropagation()}>
             <div className="move-pad">
               <button onPointerDown={() => press("left", true)} onPointerUp={() => press("left", false)} onPointerLeave={() => press("left", false)}>
@@ -4045,6 +4100,19 @@ export default function Home() {
               <button onPointerDown={() => press("jump", true)} onPointerUp={() => press("jump", false)} onPointerLeave={() => press("jump", false)}>
                 Jump
               </button>
+            </div>
+          </div>
+        )}
+        {screen === "playing" && gameOver && (
+          <div className="game-over-screen" onClick={(event) => event.stopPropagation()}>
+            <div className="game-over-panel">
+              <span>Game Over</span>
+              <h1>{levelLabel}</h1>
+              <p>Restart the stage or quit to the main menu.</p>
+              <div className="game-over-actions">
+                <button onClick={restartLevel}>Restart Level</button>
+                <button onClick={returnToMenu}>Quit</button>
+              </div>
             </div>
           </div>
         )}
