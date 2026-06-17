@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useCoreLoop } from "@/game/core/use-core-loop";
 
-type ButtonKey = "left" | "right" | "jump" | "kick" | "fire";
-type Entity = { x: number; y: number; w: number; h: number };
+type ButtonKey = "left" | "right" | "jump" | "kick" | "fire" | "sit";
+type Entity = { x: number; y: number; w: number; h: number; bossIgnore?: boolean };
 type Coin = Entity & { taken?: boolean; pulse?: number };
 type PowerUp = Entity & { taken?: boolean; kind: "fire" };
 type LifePoint = Entity & { taken?: boolean; pulse?: number };
 type BossDiamond = Entity & { active: boolean; taken?: boolean; pulse: number };
 type Hazard = Entity;
 type Projectile = Entity & { vx: number; life: number };
-type BossProjectile = Entity & { vx: number; vy: number; life: number; kind: "shard" | "wave" };
+type BossProjectile = Entity & { vx: number; vy: number; life: number; kind: "shard" | "wave" | "fire" };
 type BossPillar = Entity & { life: number };
 type MovingLift = Entity & { minX: number; maxX: number; speed: number; dir: 1 | -1 };
 type Checkpoint = Entity & { active?: boolean };
@@ -19,6 +19,7 @@ type EnvironmentProp = Entity & { src: string; flip?: boolean; alpha?: number };
 type FlyingEnemy = Entity & {
   alive: boolean;
   dir: number;
+  beeVariant: 1 | 2;
   baseY: number;
   patrolMin: number;
   patrolMax: number;
@@ -45,7 +46,21 @@ type Boss = Entity & {
   active: boolean;
   alive: boolean;
   defeated: boolean;
-  phase: "idle" | "entering" | "chasing" | "clawing" | "jumping" | "vulnerable" | "defeated";
+  phase:
+    | "idle"
+    | "entering"
+    | "chasing"
+    | "clawing"
+    | "jumping"
+    | "rising"
+    | "flyingLeft"
+    | "risingRight"
+    | "flyingRight"
+    | "descending"
+    | "grounded"
+    | "breathing"
+    | "vulnerable"
+    | "defeated";
   health: number;
   maxHealth: number;
   attackTimer: number;
@@ -65,6 +80,8 @@ type Boss = Entity & {
   jumpFrames: number;
   meleeWindup: number;
   meleeCooldown: number;
+  meleeStyle: 1 | 2;
+  breathShots: number;
 };
 type Player = Entity & {
   vx: number;
@@ -100,9 +117,21 @@ type SoundName = "jump" | "kick" | "hit" | "coin" | "hurt" | "win" | "laser" | "
 type Biome = "forest" | "ice" | "volcano" | "desert" | "haunted" | "clockwork" | "ocean" | "storm" | "void" | "shadow";
 type AnimName =
   | "idle"
+  | "idleRight"
+  | "idleRightStill"
+  | "idleLeft"
+  | "idleLeftStill"
   | "run"
+  | "runRight"
+  | "runLeft"
   | "kick"
+  | "meleeRight"
+  | "meleeLeft"
+  | "meleeRightNeutral"
+  | "meleeLeftNeutral"
   | "jump"
+  | "jumpRight"
+  | "jumpLeft"
   | "fall"
   | "hurt"
   | "dead"
@@ -110,8 +139,48 @@ type AnimName =
   | "slimeMove"
   | "slimeAttack"
   | "slimeHurt"
-  | "slimeDead";
-type BossAnimName = "idle" | "run" | "jump" | "slam" | "attack" | "hurt" | "dead";
+  | "slimeDead"
+  | "forestSlimeRight"
+  | "forestSlimeLeft"
+  | "forestBee1Right"
+  | "forestBee1Left"
+  | "forestBee2Right"
+  | "forestBee2Left";
+type BossAnimName =
+  | "idle"
+  | "run"
+  | "jump"
+  | "flyLeft"
+  | "flyRight"
+  | "slam"
+  | "attack"
+  | "hurt"
+  | "dead"
+  | "deadRight"
+  | "deadLeft"
+  | "laughRight"
+  | "laughLeft"
+  | "fireReadyRight"
+  | "fireReadyLeft"
+  | "meleeFront1Right"
+  | "meleeFront1Left"
+  | "meleeFront2Right"
+  | "meleeFront2Left";
+type FrostBossAnimName = Exclude<
+  BossAnimName,
+  | "flyLeft"
+  | "flyRight"
+  | "deadRight"
+  | "deadLeft"
+  | "laughRight"
+  | "laughLeft"
+  | "fireReadyRight"
+  | "fireReadyLeft"
+  | "meleeFront1Right"
+  | "meleeFront1Left"
+  | "meleeFront2Right"
+  | "meleeFront2Left"
+>;
 type Level = {
   id: string;
   name: string;
@@ -145,17 +214,21 @@ const ENEMY_DAMAGE = 25;
 const WALK_SPEED = 4.4;
 const RUN_JUMP_SPEED = 7.2;
 const RUN_JUMP_FRAMES = 38;
-const FOREST_BOSS_DRAW_W = 232;
-const FOREST_BOSS_DRAW_H = 260;
-const FOREST_BOSS_DRAW_X_OFFSET = -58;
-const FOREST_BOSS_DRAW_Y_OFFSET = -72;
+const ACTIVE_LEVEL_STORAGE_KEY = "alex-kido-active-level";
+const FOREST_BOSS_DRAW_W = 460;
+const FOREST_BOSS_DRAW_H = 520;
+const FOREST_BOSS_DRAW_X_OFFSET = -173;
+const FOREST_BOSS_DRAW_Y_OFFSET = -362;
+const FOREST_BOSS_FLY_Y = 73;
 const BOSS_ARENA_LEFT = 4300;
+const FOREST_BOSS_CAMERA_X = BOSS_ARENA_LEFT - 120;
 const BOSS_ARENA_RIGHT = LEVEL_END - 18;
 const FOREST_BOSS_PATROL_MIN = BOSS_ARENA_LEFT;
 const FOREST_BOSS_PATROL_MAX = BOSS_ARENA_RIGHT;
 const FOREST_BOSS_WALK_SPEED = 1.55;
 const FOREST_BOSS_WALK_VARIANCE = 0.34;
 const FOREST_BOSS_JUMP_TRAVEL_FRAMES = 40;
+const FOREST_BOSS_FIREBALL_DAMAGE = 8;
 const bossFacing = (bossState: Boss, playerX: number) => {
   return bossState.x < playerX ? -1 : 1;
 };
@@ -169,8 +242,8 @@ const makeBoss = (biome: Biome): Boss => ({
   alive: true,
   defeated: false,
   phase: "idle",
-  health: biome === "forest" ? 8 : biome === "ice" ? 8 : 5,
-  maxHealth: biome === "forest" ? 8 : biome === "ice" ? 8 : 5,
+  health: biome === "forest" ? 30 : biome === "ice" ? 8 : 5,
+  maxHealth: biome === "forest" ? 30 : biome === "ice" ? 8 : 5,
   attackTimer: 110,
   vulnerable: 0,
   slam: 0,
@@ -188,6 +261,8 @@ const makeBoss = (biome: Biome): Boss => ({
   jumpFrames: 0,
   meleeWindup: 0,
   meleeCooldown: 0,
+  meleeStyle: 1,
+  breathShots: 0,
 });
 const SPRITE_ROOT = "/assets/sprites/Free%20RPG%20Sprites/PNG_";
 const pad = (value: number) => value.toString().padStart(3, "0");
@@ -200,6 +275,39 @@ const numberedSequence = (folder: string, count: number) =>
 const numberedSequence4 = (folder: string, count: number) =>
   Array.from({ length: count }, (_, index) => `${SPRITE_ROOT}/${folder}/${pad4(index + 1)}.png`);
 const frames = (...items: string[]) => items.map((item) => `${SPRITE_ROOT}/${item}`);
+const idleRightFrames = Array.from({ length: 107 }, (_, index) => `/assets/sprites/player/idle-right/idle-right-${index.toString().padStart(3, "0")}.png`);
+const idleRightStillFrames = Array.from({ length: 24 }, (_, index) => `/assets/sprites/player/idle-right-still/idle-right-still-${pad2(index)}.png`);
+const idleLeftFrames = Array.from({ length: 110 }, (_, index) => `/assets/sprites/player/idle-left/idle-left-${index.toString().padStart(3, "0")}.png`);
+const idleLeftStillFrames = Array.from({ length: 25 }, (_, index) => `/assets/sprites/player/idle-left-still/idle-left-still-${pad2(index)}.png`);
+const runRightFrames = Array.from({ length: 13 }, (_, index) => `/assets/sprites/player/run-right/run-right-${pad2(index)}.png`);
+const runLeftFrames = Array.from({ length: 13 }, (_, index) => `/assets/sprites/player/run-left/run-left-${pad2(index)}.png`);
+const jumpRightFrames = Array.from({ length: 2 }, (_, index) => `/assets/sprites/player/jump-right/jump-right-${pad2(index)}.png`);
+const jumpLeftFrames = Array.from({ length: 2 }, (_, index) => `/assets/sprites/player/jump-left/jump-left-${pad2(index)}.png`);
+const meleeRightFrames = Array.from({ length: 2 }, (_, index) => `/assets/sprites/player/melee-right/melee-right-${pad2(index)}.png`);
+const meleeRightFrameCenters = [805, 805];
+const meleeRightNeutralFrames = ["/assets/sprites/player/melee-right-neutral/melee-right-neutral-00.png"];
+const meleeRightNeutralCenter = 805;
+const meleeLeftFrames = Array.from({ length: 2 }, (_, index) => `/assets/sprites/player/melee-left/melee-left-${pad2(index)}.png`);
+const meleeLeftFrameCenters = [624, 624];
+const meleeLeftNeutralFrames = ["/assets/sprites/player/melee-left-neutral/melee-left-neutral-00.png"];
+const meleeLeftNeutralCenter = 624;
+const forestSlimeRightFrames = Array.from({ length: 53 }, (_, index) => `/assets/sprites/enemies/forest-slime/right/slime-${pad2(index)}.png`);
+const forestSlimeLeftFrames = Array.from({ length: 53 }, (_, index) => `/assets/sprites/enemies/forest-slime/left/slime-${pad2(index)}.png`);
+const forestBeeFrames = (variant: 1 | 2, direction: "left" | "right") =>
+  Array.from({ length: 62 }, (_, index) => `/assets/sprites/enemies/forest-bee/${variant}/${direction}/bee-${pad2(index)}.png`);
+const rootGuardianHighResFrames = (animation: string, count: number) =>
+  Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/highres/${animation}/root-guardian-${animation}-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianFlyLeftFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/fly-left/root-guardian-fly-left-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianFlyRightFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/fly-right/root-guardian-fly-right-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianDeadRightFrames = Array.from({ length: 112 }, (_, index) => `/assets/sprites/bosses/root-guardian/dead-right/root-guardian-dead-right-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianDeadLeftFrames = Array.from({ length: 112 }, (_, index) => `/assets/sprites/bosses/root-guardian/dead-left/root-guardian-dead-left-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianLaughRightFrames = Array.from({ length: 130 }, (_, index) => `/assets/sprites/bosses/root-guardian/laugh-right/root-guardian-laugh-right-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianLaughLeftFrames = Array.from({ length: 130 }, (_, index) => `/assets/sprites/bosses/root-guardian/laugh-left/root-guardian-laugh-left-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianFireReadyRightFrames = Array.from({ length: 45 }, (_, index) => `/assets/sprites/bosses/root-guardian/fire-ready-right/root-guardian-fire-ready-right-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianFireReadyLeftFrames = Array.from({ length: 45 }, (_, index) => `/assets/sprites/bosses/root-guardian/fire-ready-left/root-guardian-fire-ready-left-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianMeleeFrontFrames = (style: 1 | 2, direction: "left" | "right", count: number) =>
+  Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/melee-front/${style}/${direction}/root-guardian-melee-front-${style}-${direction}-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianSingleDragonFrame = ["/assets/sprites/bosses/root-guardian/single/root-guardian-dragon.png"];
 const AUDIO_ROOT = "/assets/audio/mixkit";
 const AUDIO: Record<SoundName | "music", string> = {
   jump: `${AUDIO_ROOT}/jump.wav`,
@@ -208,7 +316,7 @@ const AUDIO: Record<SoundName | "music", string> = {
   coin: `${AUDIO_ROOT}/coin.wav`,
   hurt: `${AUDIO_ROOT}/lose.wav`,
   win: `${AUDIO_ROOT}/win.wav`,
-  laser: `${AUDIO_ROOT}/laser.wav`,
+  laser: `${AUDIO_ROOT}/fireball.wav`,
   powerup: `${AUDIO_ROOT}/powerup.wav`,
   checkpoint: `${AUDIO_ROOT}/checkpoint.wav`,
   blood: `${AUDIO_ROOT}/blood.wav`,
@@ -311,12 +419,24 @@ const localIndexForStage = (stage: number) => stage % 5;
 
 const SPRITES: Record<AnimName, string[]> = {
   idle: sequence("ADVENTURER/01-Idle/Normal", "FR_Adventurer_Idle", 12),
+  idleRight: idleRightFrames,
+  idleRightStill: idleRightStillFrames,
+  idleLeft: idleLeftFrames,
+  idleLeftStill: idleLeftStillFrames,
   run: sequence("ADVENTURER/02-Run", "FR_Adventurer_Run", 10),
+  runRight: runRightFrames,
+  runLeft: runLeftFrames,
   kick: sequence("ADVENTURER/03-Slash", "FR_Adventurer_Slash", 8),
+  meleeRight: meleeRightFrames,
+  meleeRightNeutral: meleeRightNeutralFrames,
+  meleeLeft: meleeLeftFrames,
+  meleeLeftNeutral: meleeLeftNeutralFrames,
   jump: frames(
     "ADVENTURER/04-Jump%26Fall/FR_Adventurer_JumpUp_000.png",
     "ADVENTURER/04-Jump%26Fall/FR_Adventurer_JumpUp_000.png",
   ),
+  jumpRight: jumpRightFrames,
+  jumpLeft: jumpLeftFrames,
   fall: frames(
     "ADVENTURER/04-Jump%26Fall/FR_Adventurer_JumpFall_000.png",
     "ADVENTURER/04-Jump%26Fall/FR_Adventurer_JumpFall_000.png",
@@ -328,17 +448,35 @@ const SPRITES: Record<AnimName, string[]> = {
   slimeAttack: sequence("SLIME04/03-Attack", "FR_Slime4_Attack", 8),
   slimeHurt: sequence("SLIME04/04-Hurt", "FR_Slime4_Hurt", 6),
   slimeDead: sequence("SLIME04/05-Dead", "FR_Slime4_Dead", 6),
+  forestSlimeRight: forestSlimeRightFrames,
+  forestSlimeLeft: forestSlimeLeftFrames,
+  forestBee1Right: forestBeeFrames(1, "right"),
+  forestBee1Left: forestBeeFrames(1, "left"),
+  forestBee2Right: forestBeeFrames(2, "right"),
+  forestBee2Left: forestBeeFrames(2, "left"),
 };
 const ROOT_GUARDIAN_SPRITES: Record<BossAnimName, string[]> = {
-  idle: numberedSequence("ROOT_GUARDIAN/10-Idle_Custom", 24),
-  run: numberedSequence4("ROOT_GUARDIAN/11-Run_Custom_Full", 59),
-  jump: numberedSequence("ROOT_GUARDIAN/04-Jump", 18),
-  slam: numberedSequence("ROOT_GUARDIAN/09-Air_Attack", 16),
-  attack: numberedSequence("ROOT_GUARDIAN/07-Claw_Attack", 14),
-  hurt: numberedSequence("ROOT_GUARDIAN/08-Wing_Flap", 12),
-  dead: numberedSequence("ROOT_GUARDIAN/06-Dead", 22),
+  idle: rootGuardianSingleDragonFrame,
+  run: rootGuardianSingleDragonFrame,
+  jump: rootGuardianSingleDragonFrame,
+  flyLeft: rootGuardianFlyLeftFrames,
+  flyRight: rootGuardianFlyRightFrames,
+  slam: rootGuardianSingleDragonFrame,
+  attack: rootGuardianSingleDragonFrame,
+  hurt: rootGuardianSingleDragonFrame,
+  dead: rootGuardianSingleDragonFrame,
+  deadRight: rootGuardianSingleDragonFrame,
+  deadLeft: rootGuardianSingleDragonFrame,
+  laughRight: rootGuardianSingleDragonFrame,
+  laughLeft: rootGuardianSingleDragonFrame,
+  fireReadyRight: rootGuardianSingleDragonFrame,
+  fireReadyLeft: rootGuardianSingleDragonFrame,
+  meleeFront1Right: rootGuardianSingleDragonFrame,
+  meleeFront1Left: rootGuardianSingleDragonFrame,
+  meleeFront2Right: rootGuardianSingleDragonFrame,
+  meleeFront2Left: rootGuardianSingleDragonFrame,
 };
-const FROST_WARDEN_SPRITES: Record<BossAnimName, string[]> = {
+const FROST_WARDEN_SPRITES: Record<FrostBossAnimName, string[]> = {
   idle: numberedSequence("FROST_WARDEN_CUSTOM/01-Idle", 17),
   run: numberedSequence("FROST_WARDEN_CUSTOM/02-Run", 17),
   jump: numberedSequence("FROST_WARDEN_CUSTOM/03-Jump", 17),
@@ -360,6 +498,25 @@ const VILLAIN_BOSS_SPRITES: Partial<Record<Biome, { src: string; w: number; h: n
   shadow: { src: `${VILLAIN_ROOT}/WORLD_10_SHADOW_KING/boss.png`, w: 118, h: 156, y: -4, glow: "rgba(255, 77, 125, .34)" },
 };
 const ENVIRONMENT_ROOT = "/assets/environment/curated";
+const LEVEL_BACKGROUNDS: Record<string, string> = {
+  "1.1": "/assets/backgrounds/forest-level-1-1.png",
+};
+const FOREST_PIT_LAYER = "/assets/backgrounds/forest-1-1-layers/forest-pit-back.png";
+const forestBackgroundLayers = (groundSrc: string) => [
+  { src: "/assets/backgrounds/forest-1-1-layers/forest-1-1-far.png", speed: 0.18 },
+  { src: "/assets/backgrounds/forest-1-1-layers/forest-1-1-mid.png", speed: 0.45 },
+  { src: FOREST_PIT_LAYER, speed: 1 },
+  { src: groundSrc, speed: 1 },
+];
+const LEVEL_BACKGROUND_LAYERS: Record<string, { src: string; speed: number }[]> = {
+  "1.1": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-1-ground-2.png"),
+  "1.2": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-2-ground-2.png"),
+  "1.3": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-3-ground-2.png"),
+  "1.4": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-4-ground-2.png"),
+  "1 Final": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-final-ground-2.png"),
+};
+const LEVEL_1_1_FLOATING_GROUND = "/assets/backgrounds/forest-1-1-layers/forest-1-1-floating-ground-clean.png";
+const isWorldOneLevel = (levelId: string) => levelId === "1 Final" || levelId.startsWith("1.");
 const ENVIRONMENT_ASSETS: Record<Biome, { src: string; w: number; h: number }[]> = {
   forest: [
     { src: `${ENVIRONMENT_ROOT}/trees/kenney-tree.png`, w: 86, h: 116 },
@@ -475,6 +632,7 @@ const makeFlyingEnemy = (x: number, y: number, dir: number, patrolMin: number, p
   h: 30,
   alive: true,
   dir,
+  beeVariant: noise(x * 0.091 + y * 0.047) > 0.5 ? 2 : 1,
   baseY: y,
   patrolMin,
   patrolMax,
@@ -780,10 +938,15 @@ const enforceDedicatedBossArena = (level: Level) => {
   if (!level.finalCastle) return;
   const arenaLeft = BOSS_ARENA_LEFT - 160;
   const arenaRight = LEVEL_END + 120;
-  const arenaGroundY = 430;
+  const arenaGroundY = 485;
   // Forest boss uses strict ground-combat arena to avoid hovering/altitude desync.
   if (level.biome === "forest") {
-    level.platforms = [{ x: arenaLeft, y: arenaGroundY, w: arenaRight - arenaLeft, h: 110 }];
+    level.platforms = [
+      { x: arenaLeft, y: arenaGroundY, w: arenaRight - arenaLeft, h: 110 },
+      { x: FOREST_BOSS_CAMERA_X + 100, y: 372, w: 220, h: 24, bossIgnore: true },
+      { x: FOREST_BOSS_CAMERA_X + 375, y: 244, w: 220, h: 24, bossIgnore: true },
+      { x: FOREST_BOSS_CAMERA_X + 650, y: 372, w: 220, h: 24, bossIgnore: true },
+    ];
   } else {
     level.platforms = [
       { x: arenaLeft, y: arenaGroundY, w: arenaRight - arenaLeft, h: 110 },
@@ -798,7 +961,7 @@ const enforceDedicatedBossArena = (level: Level) => {
   level.coins = [];
   level.powerUps = [];
   level.lifePoints = [];
-  level.checkpoints = [{ x: BOSS_ARENA_LEFT + 34, y: arenaGroundY - 65, w: 42, h: 65 }];
+  level.checkpoints = level.id === "1 Final" ? [] : [{ x: BOSS_ARENA_LEFT + 34, y: arenaGroundY - 65, w: 42, h: 65 }];
   level.enemies = [];
   level.flyingEnemies = [];
   level.environmentProps = [];
@@ -807,15 +970,83 @@ const enforceDedicatedBossArena = (level: Level) => {
 };
 
 const sanitizeLevelOnePlainGround = (level: Level, stage: number) => {
-  if (stage !== 0) return;
-  const plainY = 470;
+  if (stage < 0 || stage > 4) return;
+  if (level.finalCastle) return;
+  const plainY = 485;
   const plainH = 70;
   level.water = [];
   level.hazards = [];
   level.bridges = [];
-  // Keep upper gameplay route, replace fragmented bottom chunks with one continuous floor.
-  level.platforms = level.platforms.filter((platform) => platform.y < 430);
+  // Keep only the thin upper route; old thick ground chunks are replaced by the forest floor.
+  level.platforms = level.platforms.filter((platform) => platform.y < 430 && platform.h < 35).map((platform) => ({ ...platform, y: platform.y + 20 }));
   level.platforms.push({ x: 0, y: plainY, w: LEVEL_END + 120, h: plainH });
+};
+
+const FOREST_FALL_PITS: { x: number; w: number }[][] = [
+  [
+    { x: 470, w: 240 },
+    { x: 1160, w: 420 },
+    { x: 2080, w: 320 },
+    { x: 2940, w: 900 },
+    { x: 4150, w: 360 },
+    { x: 4760, w: 260 },
+  ],
+  [
+    { x: 640, w: 300 },
+    { x: 1480, w: 520 },
+    { x: 2380, w: 260 },
+    { x: 3340, w: 760 },
+    { x: 4520, w: 360 },
+  ],
+  [
+    { x: 360, w: 280 },
+    { x: 990, w: 620 },
+    { x: 1960, w: 380 },
+    { x: 2860, w: 520 },
+    { x: 3710, w: 460 },
+    { x: 4660, w: 320 },
+  ],
+  [
+    { x: 780, w: 430 },
+    { x: 1660, w: 300 },
+    { x: 2500, w: 720 },
+    { x: 3600, w: 320 },
+    { x: 4300, w: 620 },
+  ],
+];
+
+const applyForestFallPits = (level: Level, stage: number) => {
+  if (!isWorldOneLevel(level.id) || level.finalCastle || stage < 0 || stage > 3) return;
+  const pits = FOREST_FALL_PITS[stage] ?? [];
+  if (!pits.length) return;
+
+  const groundY = 485;
+  const groundH = 70;
+  const sortedPits = [...pits].sort((a, b) => a.x - b.x);
+
+  level.platforms = level.platforms.flatMap((platform) => {
+    if (platform.y !== groundY || platform.h !== groundH || platform.w < 800) return [platform];
+
+    let cursor = platform.x;
+    const groundSegments: Entity[] = [];
+    sortedPits.forEach((pit) => {
+      const pitStart = Math.max(platform.x, pit.x);
+      const pitEnd = Math.min(platform.x + platform.w, pit.x + pit.w);
+      if (pitEnd <= platform.x || pitStart >= platform.x + platform.w) return;
+      if (pitStart - cursor > 48) groundSegments.push({ ...platform, x: cursor, w: pitStart - cursor });
+      cursor = Math.max(cursor, pitEnd);
+    });
+    if (platform.x + platform.w - cursor > 48) groundSegments.push({ ...platform, x: cursor, w: platform.x + platform.w - cursor });
+    return groundSegments.length ? groundSegments : [platform];
+  });
+
+  const pitHazards = sortedPits.map((pit) => ({
+    x: pit.x,
+    y: groundY + 6,
+    w: pit.w,
+    h: HEIGHT - groundY + 120,
+  }));
+  level.hazards = [...level.hazards, ...pitHazards];
 };
 
 const snapStageActorsToGround = (level: Level) => {
@@ -1152,10 +1383,11 @@ const makeLevel = (stage = 0): Level => {
   }
   applyBiomeVariation(level, stage);
   sanitizeLevelOnePlainGround(level, stage);
+  applyForestFallPits(level, stage);
   snapStageActorsToGround(level);
   sanitizeIceBossArena(level, stage);
   enforceDedicatedBossArena(level);
-  level.environmentProps = stage === 9 && level.biome === "ice" && level.finalCastle ? [] : makeEnvironmentProps(level, stage);
+  level.environmentProps = isWorldOneLevel(level.id) || (stage === 9 && level.biome === "ice" && level.finalCastle) ? [] : makeEnvironmentProps(level, stage);
 
   return level;
 };
@@ -1167,7 +1399,7 @@ export default function Home() {
   const enableNewCoreLoop = process.env.NEXT_PUBLIC_NEW_CORE_LOOP === "1";
   const coreLoop = useCoreLoop(enableNewCoreLoop);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const keys = useRef<Record<ButtonKey, boolean>>({ left: false, right: false, jump: false, kick: false, fire: false });
+  const keys = useRef<Record<ButtonKey, boolean>>({ left: false, right: false, jump: false, kick: false, fire: false, sit: false });
   const player = useRef<Player>(makePlayer());
   const level = useRef(makeLevel());
   const boss = useRef<Boss | null>(null);
@@ -1179,6 +1411,12 @@ export default function Home() {
   const currentLevel = useRef(0);
   const levelTransition = useRef(false);
   const loadingTimers = useRef<number[]>([]);
+  const playerVisualKey = useRef("");
+  const playerVisualStartFrame = useRef(0);
+  const meleeFrameChoice = useRef(0);
+  const nextMeleeFrame = useRef(0);
+  const lastMeleeDirection = useRef<1 | -1>(-1);
+  const meleeNeutralUntilFrame = useRef(0);
   const camera = useRef(0);
   const raf = useRef(0);
   const images = useRef<Partial<Record<AnimName, HTMLImageElement[]>>>({});
@@ -1186,9 +1424,17 @@ export default function Home() {
   const frostBossImages = useRef<Partial<Record<BossAnimName, HTMLImageElement[]>>>({});
   const villainBossImages = useRef<Partial<Record<Biome, HTMLImageElement>>>({});
   const environmentImages = useRef<Record<string, HTMLImageElement>>({});
+  const levelBackgroundImages = useRef<Record<string, HTMLImageElement>>({});
+  const loadedLevelAssets = useRef<Record<string, boolean>>({});
   const sounds = useRef<Partial<Record<SoundName, HTMLAudioElement>>>({});
+  const activeSounds = useRef<HTMLAudioElement[]>([]);
+  const fireSound = useRef<HTMLAudioElement | null>(null);
   const music = useRef<HTMLAudioElement | null>(null);
   const musicSrc = useRef("");
+  const keyboardMuted = useRef(false);
+  const soundEnabled = useRef(false);
+  const pausedRef = useRef(false);
+  const pauseFrame = useRef(0);
   const audio = useRef<{ ctx: AudioContext; master: GainNode; music?: number; bossMusic?: number } | null>(null);
   const titleAudio = useRef<{ ctx: AudioContext; master: GainNode; music: number } | null>(null);
   const [hud, setHud] = useState({ coins: 0, lives: 3, message: "Reach the castle gate" });
@@ -1200,6 +1446,7 @@ export default function Home() {
   const [screen, setScreen] = useState<GameScreen>("menu");
   const [menuScreen, setMenuScreen] = useState<MenuScreen>("main");
   const [gameOver, setGameOver] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [hasProgress, setHasProgress] = useState(false);
   const [levelLabel, setLevelLabel] = useState(`${WORLD_LEVELS[0].id}: ${WORLD_LEVELS[0].name}`);
   const [loadingInfo, setLoadingInfo] = useState<LoadingInfo>({
@@ -1217,7 +1464,72 @@ export default function Home() {
     hudRef.current = hud;
   }, [hud]);
 
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  const loadImageAsset = useCallback((src: string) =>
+    new Promise<HTMLImageElement>((resolve) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => resolve(image);
+      image.src = src;
+    }), []);
+
+  const ensureLevelAssets = useCallback(
+    async (stage: number) => {
+      const nextStage = Math.max(0, Math.min(WORLD_LEVELS.length - 1, stage));
+      const theme = WORLD_LEVELS[nextStage] ?? WORLD_LEVELS[0];
+      const cacheKey = `${nextStage}:${theme.id}`;
+      if (loadedLevelAssets.current[cacheKey]) return;
+
+      const environmentSources = Array.from(new Set((ENVIRONMENT_ASSETS[theme.biome] ?? []).map((item) => item.src)));
+      const backgroundSources = new Set<string>();
+      const levelBackgroundSrc = LEVEL_BACKGROUNDS[theme.id];
+      if (levelBackgroundSrc) backgroundSources.add(levelBackgroundSrc);
+      const levelLayers = LEVEL_BACKGROUND_LAYERS[theme.id] ?? (isWorldOneLevel(theme.id) ? LEVEL_BACKGROUND_LAYERS["1.1"] : []);
+      levelLayers.forEach((layer) => backgroundSources.add(layer.src));
+      if (isWorldOneLevel(theme.id)) {
+        backgroundSources.add(LEVEL_1_1_FLOATING_GROUND);
+        backgroundSources.add(FOREST_PIT_LAYER);
+      }
+
+      await Promise.all([
+        ...environmentSources.map(async (src) => {
+          if (!environmentImages.current[src]?.complete) environmentImages.current[src] = await loadImageAsset(src);
+        }),
+        ...Array.from(backgroundSources).map(async (src) => {
+          if (!levelBackgroundImages.current[src]?.complete) levelBackgroundImages.current[src] = await loadImageAsset(src);
+        }),
+      ]);
+
+      if (theme.finalCastle) {
+        if (theme.biome === "forest") {
+          await Promise.all(
+            (Object.keys(ROOT_GUARDIAN_SPRITES) as BossAnimName[]).map(async (name) => {
+              if (!bossImages.current[name]?.length) bossImages.current[name] = await Promise.all(ROOT_GUARDIAN_SPRITES[name].map(loadImageAsset));
+            }),
+          );
+        } else if (theme.biome === "ice") {
+          await Promise.all(
+            (Object.keys(FROST_WARDEN_SPRITES) as FrostBossAnimName[]).map(async (name) => {
+              if (!frostBossImages.current[name]?.length) frostBossImages.current[name] = await Promise.all(FROST_WARDEN_SPRITES[name].map(loadImageAsset));
+            }),
+          );
+        }
+        const villainSprite = VILLAIN_BOSS_SPRITES[theme.biome];
+        if (villainSprite && !villainBossImages.current[theme.biome]?.complete) {
+          villainBossImages.current[theme.biome] = await loadImageAsset(villainSprite.src);
+        }
+      }
+
+      loadedLevelAssets.current[cacheKey] = true;
+    },
+    [loadImageAsset],
+  );
+
   const beep = useCallback((frequency: number, duration: number, type: OscillatorType, volume = 0.1, slide = 0) => {
+    if (keyboardMuted.current || !soundEnabled.current) return;
     const engine = audio.current;
     if (!engine) return;
     const now = engine.ctx.currentTime;
@@ -1235,28 +1547,75 @@ export default function Home() {
     oscillator.stop(now + duration + 0.02);
   }, []);
 
+  const trackSound = useCallback((sound: HTMLAudioElement) => {
+    activeSounds.current.push(sound);
+    sound.onended = () => {
+      activeSounds.current = activeSounds.current.filter((active) => active !== sound);
+    };
+  }, []);
+
+  const stopActiveSounds = useCallback(() => {
+    activeSounds.current.forEach((sound) => {
+      sound.pause();
+      sound.currentTime = 0;
+      sound.onended = null;
+    });
+    activeSounds.current = [];
+    Object.values(sounds.current).forEach((sound) => {
+      if (!sound) return;
+      sound.pause();
+      sound.currentTime = 0;
+    });
+    if (fireSound.current) {
+      fireSound.current.pause();
+      fireSound.current.currentTime = 0;
+    }
+  }, []);
+
+  const playFireSound = useCallback(() => {
+    if (keyboardMuted.current || !soundEnabled.current) return;
+    const sound = fireSound.current ?? sounds.current.laser ?? null;
+    if (!sound) return;
+    fireSound.current = sound;
+    sound.pause();
+    sound.currentTime = 0;
+    sound.volume = 0.75;
+    void sound.play().catch(() => undefined);
+  }, []);
+
   const playSound = useCallback(
     (name: SoundName) => {
+      if (keyboardMuted.current || !soundEnabled.current) return;
       if (name === "coin") {
         const source = sounds.current.coin;
         if (source) {
           const sound = source.cloneNode() as HTMLAudioElement;
-          sound.volume = 0.5;
+          sound.volume = 0.22;
           sound.playbackRate = 1.18;
+          trackSound(sound);
           void sound.play().catch(() => undefined);
         }
-        beep(1320, 0.055, "sine", 0.075, 360);
-        window.setTimeout(() => beep(1760, 0.07, "triangle", 0.055, 240), 42);
-        window.setTimeout(() => beep(2360, 0.05, "sine", 0.04, -180), 92);
+        beep(1320, 0.055, "sine", 0.032, 360);
+        window.setTimeout(() => beep(1760, 0.07, "triangle", 0.025, 240), 42);
+        window.setTimeout(() => beep(2360, 0.05, "sine", 0.018, -180), 92);
         return;
       }
       const source = sounds.current[name];
       if (source) {
+        if (name === "laser") {
+          source.pause();
+          source.currentTime = 0;
+          source.volume = 0.75;
+          void source.play().catch(() => undefined);
+          return;
+        }
         const sound = source.cloneNode() as HTMLAudioElement;
-        sound.volume = name === "laser" ? 0.26 : 0.38;
+        sound.volume = name === "powerup" ? 0.17 : 0.38;
+        trackSound(sound);
         void sound.play().catch(() => undefined);
         return;
       }
+      if (name === "laser") return;
       if (name === "jump") beep(420, 0.14, "square", 0.08, 320);
       if (name === "kick") beep(180, 0.09, "sawtooth", 0.09, -80);
       if (name === "hit") {
@@ -1264,14 +1623,14 @@ export default function Home() {
         beep(520, 0.08, "triangle", 0.06, -150);
       }
       if (name === "hurt") beep(150, 0.22, "sawtooth", 0.1, -80);
-      if (name === "laser") beep(980, 0.16, "sawtooth", 0.08, -520);
-      if (name === "powerup" || name === "checkpoint") beep(740, 0.2, "triangle", 0.09, 280);
+      if (name === "powerup") beep(740, 0.2, "triangle", 0.035, 280);
+      if (name === "checkpoint") beep(740, 0.2, "triangle", 0.09, 280);
       if (name === "blood" || name === "lose") beep(120, 0.16, "square", 0.08, -40);
       if (name === "win") {
         [523, 659, 784, 1046].forEach((note, index) => window.setTimeout(() => beep(note, 0.14, "triangle", 0.08), index * 90));
       }
     },
-    [beep],
+    [beep, trackSound],
   );
 
   const stopTitleMusic = useCallback(() => {
@@ -1307,6 +1666,8 @@ export default function Home() {
   }, [beep]);
 
   const startTitleMusic = useCallback(() => {
+    keyboardMuted.current = false;
+    soundEnabled.current = true;
     if (titleAudio.current) {
       void titleAudio.current.ctx.resume();
       setTitleMusicOn(true);
@@ -1358,10 +1719,14 @@ export default function Home() {
     if (playNow && !audio.current?.bossMusic) void music.current.play().catch(() => undefined);
   }, [soundOn]);
 
-  const startAudio = useCallback(() => {
+  const startAudio = useCallback((force = false) => {
+    if (keyboardMuted.current && !force) return;
+    if (force) keyboardMuted.current = false;
+    soundEnabled.current = true;
     stopTitleMusic();
     if (audio.current) {
       void audio.current.ctx.resume();
+      audio.current.master.gain.value = 0.28;
       setWorldMusic(currentLevel.current, true);
       setSoundOn(true);
       return;
@@ -1373,6 +1738,7 @@ export default function Home() {
         const sound = new Audio(src);
         sound.preload = "auto";
         sounds.current[name as SoundName] = sound;
+        if (name === "laser") fireSound.current = sound;
       }
     });
 
@@ -1402,6 +1768,7 @@ export default function Home() {
   }, [beep, setWorldMusic, stopTitleMusic]);
 
   const stopAudio = useCallback(() => {
+    soundEnabled.current = false;
     const engine = audio.current;
     if (engine) {
       if (engine.music) window.clearInterval(engine.music);
@@ -1413,35 +1780,27 @@ export default function Home() {
       music.current.pause();
       music.current.currentTime = 0;
     }
+    stopActiveSounds();
     setSoundOn(false);
+  }, [stopActiveSounds]);
+
+  const pauseGameAudio = useCallback(() => {
+    if (audio.current) audio.current.master.gain.value = 0;
+    if (music.current) music.current.pause();
+    activeSounds.current.forEach((sound) => sound.pause());
   }, []);
+
+  const resumeGameAudio = useCallback(() => {
+    if (audio.current) audio.current.master.gain.value = 0.28;
+    if (soundOn && music.current && !audio.current?.bossMusic) void music.current.play().catch(() => undefined);
+  }, [soundOn]);
 
   useEffect(() => {
     let cancelled = false;
-    const loadImage = (src: string) =>
-      new Promise<HTMLImageElement>((resolve) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = () => resolve(image);
-        image.src = src;
-      });
 
     Promise.all([
       ...(Object.keys(SPRITES) as AnimName[]).map(async (name) => {
-        images.current[name] = await Promise.all(SPRITES[name].map(loadImage));
-      }),
-      ...(Object.keys(ROOT_GUARDIAN_SPRITES) as BossAnimName[]).map(async (name) => {
-        bossImages.current[name] = await Promise.all(ROOT_GUARDIAN_SPRITES[name].map(loadImage));
-      }),
-      ...(Object.keys(FROST_WARDEN_SPRITES) as BossAnimName[]).map(async (name) => {
-        frostBossImages.current[name] = await Promise.all(FROST_WARDEN_SPRITES[name].map(loadImage));
-      }),
-      ...(Object.keys(VILLAIN_BOSS_SPRITES) as Biome[]).map(async (biome) => {
-        const sprite = VILLAIN_BOSS_SPRITES[biome];
-        if (sprite) villainBossImages.current[biome] = await loadImage(sprite.src);
-      }),
-      ...Array.from(new Set(Object.values(ENVIRONMENT_ASSETS).flatMap((items) => items.map((item) => item.src)))).map(async (src) => {
-        environmentImages.current[src] = await loadImage(src);
+        images.current[name] = await Promise.all(SPRITES[name].map(loadImageAsset));
       }),
     ]).then(() => {
       if (!cancelled) setAssetsReady(true);
@@ -1450,11 +1809,12 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadImageAsset]);
 
   const loadLevel = useCallback((stage: number, keepProgress = true) => {
     stopBossMusic();
     setGameOver(false);
+    setPaused(false);
     const nextStage = Math.max(0, Math.min(WORLD_LEVELS.length - 1, stage));
     const nextLevel = makeLevel(nextStage);
     const previousFire = player.current.fire;
@@ -1482,7 +1842,7 @@ export default function Home() {
     player.current.x = checkpoint.current.x;
     player.current.y = checkpoint.current.y;
     camera.current = 0;
-    if (nextLevel.finalCastle) camera.current = BOSS_ARENA_LEFT - 120;
+    if (nextLevel.finalCastle) camera.current = FOREST_BOSS_CAMERA_X;
     levelTransition.current = false;
     setWon(false);
     setLevelLabel(`${nextLevel.id}: ${nextLevel.name}`);
@@ -1499,10 +1859,12 @@ export default function Home() {
     (stage: number, keepProgress = true) => {
       clearLoadingTimers();
       setGameOver(false);
+      setPaused(false);
       const nextStage = Math.max(0, Math.min(WORLD_LEVELS.length - 1, stage));
       const nextLevel = WORLD_LEVELS[nextStage] ?? WORLD_LEVELS[0];
       const world = WORLD_DEFINITIONS[worldIndexForStage(nextStage)] ?? WORLD_DEFINITIONS[0];
-      keys.current = { left: false, right: false, jump: false, kick: false, fire: false };
+      window.sessionStorage.setItem(ACTIVE_LEVEL_STORAGE_KEY, String(nextStage));
+      keys.current = { left: false, right: false, jump: false, kick: false, fire: false, sit: false };
       setWon(false);
       setScreen("loading");
       setLoadingInfo({
@@ -1517,22 +1879,22 @@ export default function Home() {
       });
       loadingTimers.current = [
         window.setTimeout(() => setLoadingInfo((value) => ({ ...value, status: "Preparing world assets", progress: 48 })), 280),
-        window.setTimeout(() => setLoadingInfo((value) => ({ ...value, status: "Placing enemies and platforms", progress: 74 })), 620),
-        window.setTimeout(() => {
+        window.setTimeout(() => setLoadingInfo((value) => ({ ...value, status: "Loading selected level only", progress: 74 })), 620),
+        window.setTimeout(async () => {
+          await ensureLevelAssets(nextStage);
           loadLevel(nextStage, keepProgress);
           setLoadingInfo((value) => ({ ...value, status: "Ready", progress: 100 }));
-        }, 980),
-        window.setTimeout(() => {
           setScreen("playing");
           loadingTimers.current = [];
-        }, 1240),
+        }, 820),
       ];
     },
-    [clearLoadingTimers, loadLevel],
+    [clearLoadingTimers, ensureLevelAssets, loadLevel],
   );
 
   const restart = useCallback(() => {
     setGameOver(false);
+    setPaused(false);
     startAudio();
     setHasProgress(true);
     startLevelLoading(0, false);
@@ -1540,6 +1902,7 @@ export default function Home() {
 
   const restartLevel = useCallback(() => {
     setGameOver(false);
+    setPaused(false);
     startAudio();
     startLevelLoading(currentLevel.current, false);
   }, [startAudio, startLevelLoading]);
@@ -1566,65 +1929,94 @@ export default function Home() {
   const returnToMenu = useCallback(() => {
     clearLoadingTimers();
     setGameOver(false);
-    keys.current = { left: false, right: false, jump: false, kick: false, fire: false };
+    setPaused(false);
+    keys.current = { left: false, right: false, jump: false, kick: false, fire: false, sit: false };
+    window.sessionStorage.removeItem(ACTIVE_LEVEL_STORAGE_KEY);
     stopAudio();
     setScreen("menu");
     setMenuScreen("main");
     startTitleMusic();
   }, [clearLoadingTimers, startTitleMusic, stopAudio]);
 
+  useEffect(() => {
+    if (!assetsReady || screen !== "menu" || hasProgress) return;
+    const savedStage = Number(window.sessionStorage.getItem(ACTIVE_LEVEL_STORAGE_KEY));
+    if (!Number.isFinite(savedStage)) return;
+    setHasProgress(true);
+    startLevelLoading(savedStage, false);
+  }, [assetsReady, hasProgress, screen, startLevelLoading]);
+
   const toggleTitleMusic = useCallback(() => {
     if (titleAudio.current) {
       stopTitleMusic();
+      soundEnabled.current = soundOn;
       return;
     }
     startTitleMusic();
-  }, [startTitleMusic, stopTitleMusic]);
+  }, [soundOn, startTitleMusic, stopTitleMusic]);
 
   const toggleAudio = useCallback(() => {
     if (audio.current) {
       stopAudio();
       return;
     }
-    startAudio();
+    startAudio(true);
   }, [startAudio, stopAudio]);
+
+  const muteAllAudio = useCallback(() => {
+    keyboardMuted.current = true;
+    stopTitleMusic();
+    stopAudio();
+  }, [stopAudio, stopTitleMusic]);
+
+  const toggleKeyboardMute = useCallback(() => {
+    if (keyboardMuted.current || !soundEnabled.current) {
+      startAudio(true);
+      return;
+    }
+    muteAllAudio();
+  }, [muteAllAudio, startAudio]);
+
+  const togglePause = useCallback(() => {
+    if (screen !== "playing" || gameOver || won) return;
+    setPaused((value) => {
+      const nextPaused = !value;
+      keys.current = { left: false, right: false, jump: false, kick: false, fire: false, sit: false };
+      if (nextPaused) {
+        pauseFrame.current = Math.floor(performance.now() / 85);
+        pauseGameAudio();
+      } else {
+        resumeGameAudio();
+      }
+      return nextPaused;
+    });
+  }, [gameOver, pauseGameAudio, resumeGameAudio, screen, won]);
 
   const loseLife = useCallback(() => {
     const p = player.current;
     const nextLives = Math.max(0, hudRef.current.lives - 1);
-    const previousFire = p.fire;
     const shouldGameOver = nextLives === 0;
     playSound(shouldGameOver ? "lose" : "hurt");
-    setGameOver(shouldGameOver);
+    setGameOver(true);
     setHud((value) => ({
       ...value,
       lives: nextLives,
       message: shouldGameOver
         ? "Game over. Restart level or quit to menu."
-        : `Careful. ${nextLives} heart${nextLives === 1 ? "" : "s"} left.`,
+        : `You died. ${nextLives} heart${nextLives === 1 ? "" : "s"} left. Restart level or quit to menu.`,
     }));
-    if (shouldGameOver) {
-      p.dead = 1;
-      p.deadFall = !p.grounded;
-      p.vx = 0;
-      p.vy = p.deadFall ? Math.max(2, p.vy) : 0;
-      p.attack = 0;
-      p.hurt = 0;
-      p.fireCooldown = 0;
-      p.longJump = 0;
-      p.freeze = 0;
-      p.dropping = 0;
-      p.grounded = !p.deadFall;
-    } else {
-      player.current = {
-        ...makePlayer(),
-        x: checkpoint.current.x,
-        y: checkpoint.current.y,
-        fire: previousFire,
-        hurt: 70,
-      };
-    }
-    keys.current = { left: false, right: false, jump: false, kick: false, fire: false };
+    p.dead = 1;
+    p.deadFall = !p.grounded;
+    p.vx = 0;
+    p.vy = p.deadFall ? Math.max(2, p.vy) : 0;
+    p.attack = 0;
+    p.hurt = 0;
+    p.fireCooldown = 0;
+    p.longJump = 0;
+    p.freeze = 0;
+    p.dropping = 0;
+    p.grounded = !p.deadFall;
+    keys.current = { left: false, right: false, jump: false, kick: false, fire: false, sit: false };
     projectiles.current = [];
   }, [playSound]);
 
@@ -1658,17 +2050,26 @@ export default function Home() {
       keys.current[key] = value;
     };
     const resetKeys = () => {
-      keys.current = { left: false, right: false, jump: false, kick: false, fire: false };
+      keys.current = { left: false, right: false, jump: false, kick: false, fire: false, sit: false };
     };
     const down = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      const controlKey = ["arrowleft", "arrowright", "arrowup", " ", "a", "d", "w", "k", "x", "f", "c", "r", "m"].includes(key);
+      const controlKey = ["arrowleft", "arrowright", "arrowup", " ", "a", "d", "s", "w", "k", "e", "f", "c", "r", "m", "p"].includes(key);
       if (controlKey) event.preventDefault();
+
+      if (key === "m" && !event.repeat) {
+        toggleKeyboardMute();
+        return;
+      }
+
+      if (key === "p" && !event.repeat) {
+        togglePause();
+        return;
+      }
 
       if (screen === "menu") {
         if (key === "enter" || key === " ") startNewGame();
         if (key === "c") continueGame();
-        if (key === "m" && !event.repeat) toggleTitleMusic();
         return;
       }
       if (screen === "playing" && gameOver) {
@@ -1681,13 +2082,20 @@ export default function Home() {
         return;
       }
 
+      if (pausedRef.current) return;
+
       if (["arrowleft", "a"].includes(key)) setKey("left", true);
       if (["arrowright", "d"].includes(key)) setKey("right", true);
+      if (key === "s") setKey("sit", true);
       if (["arrowup", "w", " "].includes(key)) {
         setKey("jump", true);
         startAudio();
       }
-      if (["k", "x"].includes(key)) {
+      if (key === "e" && !event.repeat) {
+        meleeFrameChoice.current = nextMeleeFrame.current;
+        nextMeleeFrame.current = (nextMeleeFrame.current + 1) % 2;
+      }
+      if (["k", "e"].includes(key)) {
         setKey("kick", true);
         startAudio();
       }
@@ -1696,14 +2104,14 @@ export default function Home() {
         startAudio();
       }
       if (key === "r" && !event.repeat) restart();
-      if (key === "m" && !event.repeat) toggleAudio();
     };
     const up = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
       if (["arrowleft", "a"].includes(key)) setKey("left", false);
       if (["arrowright", "d"].includes(key)) setKey("right", false);
+      if (key === "s") setKey("sit", false);
       if (["arrowup", "w", " "].includes(key)) setKey("jump", false);
-      if (["k", "x"].includes(key)) setKey("kick", false);
+      if (["k", "e"].includes(key)) setKey("kick", false);
       if (["f", "c"].includes(key)) setKey("fire", false);
     };
     window.addEventListener("keydown", down);
@@ -1714,7 +2122,7 @@ export default function Home() {
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", resetKeys);
     };
-  }, [continueGame, gameOver, restart, restartLevel, returnToMenu, screen, startAudio, startNewGame, toggleAudio, toggleTitleMusic]);
+  }, [continueGame, gameOver, restart, restartLevel, returnToMenu, screen, startAudio, startNewGame, toggleKeyboardMute, togglePause]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1928,6 +2336,21 @@ export default function Home() {
         }
         ctx.restore();
         return;
+      }
+      if (level.current.biome === "forest") {
+        const anim: AnimName =
+          enemy.beeVariant === 1
+            ? enemy.dir > 0
+              ? "forestBee1Right"
+              : "forestBee1Left"
+            : enemy.dir > 0
+              ? "forestBee2Right"
+              : "forestBee2Left";
+        const bob = Math.sin(frame * 0.45 + enemy.flap) * 3;
+        const spriteW = 96;
+        const spriteH = 72;
+        const drawn = drawSprite(anim, Math.floor(frame / 2), enemy.x + enemy.w / 2 - spriteW / 2, enemy.y + enemy.h / 2 - spriteH / 2 + bob, spriteW, spriteH, 1);
+        if (drawn) return;
       }
       const wing = Math.sin(frame * 0.9 + enemy.flap) * 9;
       ctx.save();
@@ -2250,7 +2673,7 @@ export default function Home() {
       const defeatedPose = bossState.phase === "defeated";
       const hovering = !defeatedPose && (bossState.phase === "jumping" || bossState.phase === "entering");
       const y = bossState.y + (hovering ? Math.sin(frame * 0.18) * 2 : 0);
-      const renderFace = defeatedPose ? bossState.face : bossFacing(bossState, playerX);
+      const renderFace = bossState.biome === "forest" ? bossState.face : defeatedPose ? bossState.face : bossFacing(bossState, playerX);
       const weak = bossState.vulnerable > 0;
       const drawDownloadedVillain = () => {
         const sprite = VILLAIN_BOSS_SPRITES[bossState.biome];
@@ -2283,51 +2706,90 @@ export default function Home() {
         const forestMoveIntent = Math.abs((bossState.targetX ?? bossState.x) - bossState.x);
         const stationaryForestBoss = Math.abs(bossState.vx) < 0.08 && forestMoveIntent < 14 && forestBossGrounded && bossState.hurt <= 0;
         const forestShouldRun = bossState.phase === "chasing" && forestBossGrounded && bossState.hurt <= 0 && !clawing && (Math.abs(bossState.vx) > 0.06 || forestMoveIntent >= 14);
+        const forestDeadAnim: BossAnimName = bossState.face > 0 ? "deadRight" : "deadLeft";
+        const forestLaughAnim: BossAnimName = bossState.face > 0 ? "laughRight" : "laughLeft";
+        const forestMeleeAnim: BossAnimName =
+          bossState.meleeStyle === 1
+            ? bossState.face >= 0
+              ? "meleeFront1Right"
+              : "meleeFront1Left"
+            : bossState.face >= 0
+              ? "meleeFront2Right"
+              : "meleeFront2Left";
+        const forestShouldLaugh = gameOver && bossState.alive && bossState.phase !== "defeated";
         const anim: BossAnimName =
           bossState.phase === "defeated"
-            ? "dead"
-            : bossState.hurt > 0
+            ? forestDeadAnim
+            : forestShouldLaugh
+              ? forestLaughAnim
+              : bossState.hurt > 0
               ? "hurt"
-              : bossState.phase === "jumping" || bossState.phase === "entering"
-                ? "jump"
-                : bossState.phase === "clawing" || clawing || bossState.slam > 0
-                  ? "attack"
-                : stationaryForestBoss
-                  ? "idle"
-                : weak
-                  ? bossState.slam > 0
-                    ? "slam"
-                    : "attack"
-                  : forestShouldRun
-                    ? "run"
-                    : "idle";
+              : bossState.phase === "clawing"
+                ? forestMeleeAnim
+              : bossState.phase === "breathing"
+                ? bossState.face >= 0
+                  ? "fireReadyRight"
+                  : "fireReadyLeft"
+              : bossState.phase === "flyingLeft"
+                ? "flyLeft"
+              : bossState.phase === "flyingRight"
+                ? "flyRight"
+              : bossState.phase === "entering"
+                ? "flyLeft"
+              : bossState.phase === "rising" || bossState.phase === "descending"
+                ? bossState.face > 0
+                  ? "flyLeft"
+                  : "flyRight"
+              : bossState.phase === "risingRight"
+                ? "flyRight"
+              : bossState.phase === "jumping" && Math.abs(bossState.vx) > 0.05
+                ? bossState.vx > 0
+                  ? "flyRight"
+                  : "flyLeft"
+              : stationaryForestBoss
+                ? "idle"
+                : forestShouldRun
+                  ? "run"
+                  : "idle";
         // Use slower cadence for long 30+ frame strips to avoid jitter and repeated micro-motions.
         const forestFrameStep =
           anim === "idle"
             ? 3
             : anim === "run"
               ? 2
-              : anim === "jump"
+              : anim === "hurt"
                 ? 2
-                : anim === "attack" || anim === "slam"
-                  ? 2
-                  : anim === "hurt"
-                    ? 2
-                    : 3;
+                : 3;
+        const useForestFly = anim === "flyLeft" || anim === "flyRight";
+        const useDirectionalForestDead = anim === "deadRight" || anim === "deadLeft";
+        const useDirectionalForestLaugh = anim === "laughRight" || anim === "laughLeft";
+        const useDirectionalFireReady = anim === "fireReadyRight" || anim === "fireReadyLeft";
+        const useDirectionalMeleeFront = anim === "meleeFront1Right" || anim === "meleeFront1Left" || anim === "meleeFront2Right" || anim === "meleeFront2Left";
+        const renderAnim: BossAnimName = useForestFly ? anim : anim;
+        const renderFrameStep = useForestFly || useDirectionalFireReady || useDirectionalMeleeFront ? 1 : useDirectionalForestLaugh ? 2 : forestFrameStep;
+        const renderBossFace = useForestFly || useDirectionalForestDead || useDirectionalForestLaugh || useDirectionalMeleeFront ? 1 : renderFace;
+        const fireReadyFrame = useDirectionalFireReady ? Math.max(0, Math.min(ROOT_GUARDIAN_SPRITES[renderAnim].length - 1, ROOT_GUARDIAN_SPRITES[renderAnim].length - Math.max(0, bossState.intro))) : undefined;
+        const meleeFrame = useDirectionalMeleeFront
+          ? Math.max(0, Math.min(ROOT_GUARDIAN_SPRITES[renderAnim].length - 1, ROOT_GUARDIAN_SPRITES[renderAnim].length + 1 - Math.max(0, bossState.meleeWindup)))
+          : undefined;
+        const renderForcedFrame = forcedFrame ?? fireReadyFrame ?? meleeFrame;
+        const forestBossSpriteY = useDirectionalForestDead || useDirectionalForestLaugh || useDirectionalFireReady || useDirectionalMeleeFront
+          ? bossState.groundY + bossState.h - FOREST_BOSS_DRAW_H
+          : y + FOREST_BOSS_DRAW_Y_OFFSET;
         ctx.save();
         ctx.globalAlpha = 1;
         const drewBoss = drawBossSprite(
           bossImages.current,
-          anim,
+          renderAnim,
           frame,
           x + FOREST_BOSS_DRAW_X_OFFSET,
-          y + FOREST_BOSS_DRAW_Y_OFFSET,
+          forestBossSpriteY,
           FOREST_BOSS_DRAW_W,
           FOREST_BOSS_DRAW_H,
-          renderFace,
-          forestFrameStep,
+          renderBossFace,
+          renderFrameStep,
           bossState.phase === "defeated" && forcedFrame === undefined,
-          forcedFrame,
+          renderForcedFrame,
         );
         ctx.restore();
         if (drewBoss) {
@@ -2807,6 +3269,7 @@ export default function Home() {
     };
     const drawBiomeForeground = (map: Level) => {
       if (map.biome === "forest") {
+        if (isWorldOneLevel(map.id)) return;
         drawScreenRect(0, 447, WIDTH, 34, "#58b84f");
         for (let i = 0; i < 90; i += 1) {
           const x = ((i * 73 - camera.current) % 1200) + camera.current;
@@ -2837,7 +3300,7 @@ export default function Home() {
     const draw = () => {
       const p = player.current;
       const map = level.current;
-      const frame = Math.floor(performance.now() / 85);
+      const frame = pausedRef.current ? pauseFrame.current : Math.floor(performance.now() / 85);
       const style = biomeStyle(map.biome);
       const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
       gradient.addColorStop(0, map.skyTop);
@@ -2847,46 +3310,76 @@ export default function Home() {
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      ctx.fillStyle = "rgba(255, 233, 128, .9)";
-      ctx.beginPath();
-      ctx.arc(835 - camera.current * 0.05, 82, 38, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(255, 248, 188, .45)";
-      ctx.beginPath();
-      ctx.arc(835 - camera.current * 0.05, 82, 54, 0, Math.PI * 2);
-      ctx.fill();
+      const levelBackgroundSrc = LEVEL_BACKGROUNDS[map.id];
+      const levelBackground = levelBackgroundSrc ? levelBackgroundImages.current[levelBackgroundSrc] : undefined;
+      const hasLevelBackground = Boolean(levelBackground?.complete && levelBackground.naturalWidth);
+      const levelBackgroundLayers = LEVEL_BACKGROUND_LAYERS[map.id] ?? (isWorldOneLevel(map.id) ? LEVEL_BACKGROUND_LAYERS["1.1"] : []);
+      const hasLevelBackgroundLayers =
+        levelBackgroundLayers.length > 0 &&
+        levelBackgroundLayers.every((layer) => {
+          const image = levelBackgroundImages.current[layer.src];
+          return Boolean(image?.complete && image.naturalWidth);
+        });
 
-      ctx.fillStyle = style.ridge;
-      for (let ridge = 0; ridge < 6; ridge += 1) {
-        const base = 390 + (ridge % 2) * 24;
+      if (hasLevelBackgroundLayers) {
+        levelBackgroundLayers.forEach((layer) => {
+          const image = levelBackgroundImages.current[layer.src];
+          if (!image) return;
+          const scale = HEIGHT / image.naturalHeight;
+          const drawW = Math.max(WIDTH, image.naturalWidth * scale);
+          const offset = -((camera.current * layer.speed) % drawW);
+          ctx.drawImage(image, Math.round(offset), 0, drawW, HEIGHT);
+          if (offset + drawW < WIDTH) ctx.drawImage(image, Math.round(offset + drawW), 0, drawW, HEIGHT);
+        });
+      } else if (hasLevelBackground && levelBackground) {
+        const scale = HEIGHT / levelBackground.naturalHeight;
+        const drawW = Math.max(WIDTH, levelBackground.naturalWidth * scale);
+        const travel = Math.max(1, drawW - WIDTH);
+        const offset = -((camera.current * 0.18) % travel);
+        ctx.drawImage(levelBackground, Math.round(offset), 0, drawW, HEIGHT);
+        if (offset + drawW < WIDTH) ctx.drawImage(levelBackground, Math.round(offset + drawW), 0, drawW, HEIGHT);
+      } else {
+        ctx.fillStyle = "rgba(255, 233, 128, .9)";
         ctx.beginPath();
-        ctx.moveTo(-80, HEIGHT);
-        for (let x = -80; x <= WIDTH + 160; x += 160) {
-          ctx.lineTo(x, base + Math.sin((x + camera.current * 0.18 + ridge * 100) / 180) * 18);
-        }
-        ctx.lineTo(WIDTH + 160, HEIGHT);
-        ctx.closePath();
+        ctx.arc(835 - camera.current * 0.05, 82, 38, 0, Math.PI * 2);
         ctx.fill();
-      }
-      drawBiomeBackdrop(map, frame);
+        ctx.fillStyle = "rgba(255, 248, 188, .45)";
+        ctx.beginPath();
+        ctx.arc(835 - camera.current * 0.05, 82, 54, 0, Math.PI * 2);
+        ctx.fill();
 
-      if (map.biome === "forest" || map.biome === "ice" || map.biome === "storm") {
-        const cloudCount = map.biome === "forest" ? 12 : map.biome === "ice" ? 5 : 18;
-        for (let i = 0; i < cloudCount; i += 1) {
-          const x = ((i * 520 - camera.current * 0.24) % 2500) + camera.current * 0.24 - 220;
-          const y = map.biome === "storm" ? 48 + (i % 5) * 28 : 78 + (i % 4) * 34;
-          const scale = map.biome === "storm" ? 1 + (i % 4) * 0.14 : map.biome === "ice" ? 0.62 + (i % 3) * 0.08 : 0.78 + (i % 3) * 0.12;
-          ctx.save();
-          if (map.biome === "ice") ctx.globalAlpha = 0.58;
-          if (map.biome === "storm") ctx.globalAlpha = 0.72;
-          drawCloud(x, y, scale);
-          ctx.restore();
+        ctx.fillStyle = style.ridge;
+        for (let ridge = 0; ridge < 6; ridge += 1) {
+          const base = 390 + (ridge % 2) * 24;
+          ctx.beginPath();
+          ctx.moveTo(-80, HEIGHT);
+          for (let x = -80; x <= WIDTH + 160; x += 160) {
+            ctx.lineTo(x, base + Math.sin((x + camera.current * 0.18 + ridge * 100) / 180) * 18);
+          }
+          ctx.lineTo(WIDTH + 160, HEIGHT);
+          ctx.closePath();
+          ctx.fill();
         }
-      }
-      if (map.biome === "forest") {
-        for (let i = 0; i < 10; i += 1) {
-          const x = ((i * 380 - camera.current * 0.18) % 1800) + camera.current * 0.18 - 140;
-          drawBird(x, 118 + (i % 5) * 28, 0.7 + (i % 3) * 0.22, frame);
+        drawBiomeBackdrop(map, frame);
+
+        if (map.biome === "forest" || map.biome === "ice" || map.biome === "storm") {
+          const cloudCount = map.biome === "forest" ? 12 : map.biome === "ice" ? 5 : 18;
+          for (let i = 0; i < cloudCount; i += 1) {
+            const x = ((i * 520 - camera.current * 0.24) % 2500) + camera.current * 0.24 - 220;
+            const y = map.biome === "storm" ? 48 + (i % 5) * 28 : 78 + (i % 4) * 34;
+            const scale = map.biome === "storm" ? 1 + (i % 4) * 0.14 : map.biome === "ice" ? 0.62 + (i % 3) * 0.08 : 0.78 + (i % 3) * 0.12;
+            ctx.save();
+            if (map.biome === "ice") ctx.globalAlpha = 0.58;
+            if (map.biome === "storm") ctx.globalAlpha = 0.72;
+            drawCloud(x, y, scale);
+            ctx.restore();
+          }
+        }
+        if (map.biome === "forest") {
+          for (let i = 0; i < 10; i += 1) {
+            const x = ((i * 380 - camera.current * 0.18) % 1800) + camera.current * 0.18 - 140;
+            drawBird(x, 118 + (i % 5) * 28, 0.7 + (i % 3) * 0.22, frame);
+          }
         }
       }
       if (map.biome === "ice") {
@@ -2927,7 +3420,7 @@ export default function Home() {
           ctx.fillRect(starX, starY, 1 + (i % 2), 1 + (i % 2));
         }
       }
-      if (map.biome === "forest") {
+      if (map.biome === "forest" && !isWorldOneLevel(map.id)) {
         drawBalloon(1220, 142, 0.8, "#e8584f", frame);
         drawBalloon(2910, 102, 0.65, "#f2c75c", frame);
         drawBalloon(4380, 160, 0.72, "#47a6d8", frame);
@@ -2938,6 +3431,16 @@ export default function Home() {
       drawBiomeForeground(map);
 
       map.platforms.forEach((plat) => {
+        if (isWorldOneLevel(map.id) && plat.y >= 430 && plat.h >= 35) return;
+        if (isWorldOneLevel(map.id)) {
+          const floatingGround = levelBackgroundImages.current[LEVEL_1_1_FLOATING_GROUND];
+          if (floatingGround?.complete && floatingGround.naturalWidth) {
+            const drawW = plat.w;
+            const drawH = Math.max(44, Math.min(78, (drawW * floatingGround.naturalHeight) / floatingGround.naturalWidth));
+            ctx.drawImage(floatingGround, Math.round(plat.x - camera.current), Math.round(plat.y - 32), drawW, drawH);
+            return;
+          }
+        }
         drawPlatformDirt(plat, map.biome);
         drawGrassCap(plat, map.biome);
         ctx.fillStyle = "rgba(46, 25, 13, .2)";
@@ -2969,6 +3472,7 @@ export default function Home() {
         ctx.strokeRect(xLift + 1, lift.y + 1, lift.w - 2, lift.h - 2);
       });
       map.hazards.forEach((hazard) => {
+        if (isWorldOneLevel(map.id)) return;
         if (map.biome === "volcano") {
           const lavaGlow = ctx.createLinearGradient(0, hazard.y, 0, hazard.y + hazard.h);
           lavaGlow.addColorStop(0, "rgba(255,230,84,.86)");
@@ -3066,6 +3570,19 @@ export default function Home() {
           ctx.fillRect(x, shot.y, shot.w, shot.h);
           return;
         }
+        if (shot.kind === "fire") {
+          const flame = ctx.createRadialGradient(x + shot.w * 0.38, shot.y + shot.h * 0.42, 2, x + shot.w / 2, shot.y + shot.h / 2, shot.w * 0.78);
+          flame.addColorStop(0, "#fff1a6");
+          flame.addColorStop(0.42, "#ff9f2e");
+          flame.addColorStop(1, "rgba(221,48,22,.35)");
+          ctx.fillStyle = flame;
+          ctx.beginPath();
+          ctx.ellipse(x + shot.w / 2, shot.y + shot.h / 2, shot.w * 0.62, shot.h * 0.52, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(255,70,20,.45)";
+          ctx.fillRect(shot.vx >= 0 ? x - 16 : x + shot.w - 2, shot.y + shot.h / 2 - 3, 18, 6);
+          return;
+        }
         ctx.fillStyle = "#b6f3ff";
         ctx.beginPath();
         ctx.moveTo(x + shot.w / 2, shot.y);
@@ -3078,7 +3595,18 @@ export default function Home() {
       map.enemies.forEach((enemy) => {
         if (!enemy.alive && enemy.dead <= 0) return;
         drawBloodBurst(enemy);
-        const anim: AnimName = !enemy.alive ? "slimeDead" : enemy.hurt > 0 ? "slimeHurt" : Math.abs(enemy.x - p.x) < 58 ? "slimeAttack" : "slimeMove";
+        const useForestSlime = map.biome === "forest";
+        const anim: AnimName = useForestSlime
+          ? enemy.dir > 0
+            ? "forestSlimeRight"
+            : "forestSlimeLeft"
+          : !enemy.alive
+            ? "slimeDead"
+            : enemy.hurt > 0
+              ? "slimeHurt"
+              : Math.abs(enemy.x - p.x) < 58
+                ? "slimeAttack"
+                : "slimeMove";
         const squash = !enemy.alive ? enemy.squash : 0;
         const stompDissolve = !enemy.alive ? 1 - Math.max(0, Math.min(1, enemy.dead / 56)) : 0;
         const sink = stompDissolve * 48;
@@ -3086,8 +3614,8 @@ export default function Home() {
         const spriteY = enemy.y - 25 + squash + sink;
         ctx.save();
         ctx.globalAlpha = !enemy.alive ? Math.max(0, 1 - stompDissolve * 1.15) : 1;
-        const enemyFrame = !enemy.alive ? Math.min(5, Math.floor((999999 - enemy.dead) / 9)) : Math.floor(frame / 2);
-        const drawn = drawSprite(anim, enemyFrame, enemy.x - 20, spriteY, 88, spriteHeight, -enemy.dir);
+        const enemyFrame = useForestSlime ? Math.floor(frame / 2) : !enemy.alive ? Math.min(5, Math.floor((999999 - enemy.dead) / 9)) : Math.floor(frame / 2);
+        const drawn = drawSprite(anim, enemyFrame, enemy.x - 20, spriteY, 88, spriteHeight, useForestSlime ? 1 : -enemy.dir);
         if (!drawn) {
           drawRect(enemy.x, enemy.y + 12 + squash, enemy.w, Math.max(12, enemy.h - 12 - squash), enemy.hurt > 0 ? "#ff78a5" : "#8b3f9f");
           drawRect(enemy.x + 8, enemy.y + squash, enemy.w - 16, Math.max(8, 20 - squash / 2), "#b761c9");
@@ -3121,7 +3649,80 @@ export default function Home() {
                   : Math.abs(p.vx) > 0
                     ? "run"
                     : "idle";
-      const playerDrawn = drawSprite(playerAnim, frame, p.x - 35, p.y - 32, 114, 104, -p.face, playerAnim === "dead");
+      const runRight = playerAnim === "run" && p.face > 0;
+      const runLeft = playerAnim === "run" && p.face < 0;
+      const idleRight = playerAnim === "idle" && p.face > 0 && p.fireCooldown <= 0 && !keys.current.fire;
+      const idleLeft = playerAnim === "idle" && p.face < 0 && p.fireCooldown <= 0 && !keys.current.fire;
+      const jumpRight = !p.grounded && p.face > 0 && (playerAnim === "jump" || playerAnim === "fall");
+      const jumpLeft = !p.grounded && p.face < 0 && (playerAnim === "jump" || playerAnim === "fall");
+      const landRight = p.grounded && p.face > 0 && p.land > 0;
+      const landLeft = p.grounded && p.face < 0 && p.land > 0;
+      const meleeRight = playerAnim === "kick" && p.face > 0;
+      const meleeLeft = playerAnim === "kick" && p.face < 0;
+      const sitting = keys.current.sit && p.grounded && p.attack <= 0 && p.dead <= 0 && !gameOver;
+      const meleeLeftNeutral =
+        playerAnim === "idle" &&
+        p.face < 0 &&
+        lastMeleeDirection.current < 0 &&
+        frame < meleeNeutralUntilFrame.current &&
+        !keys.current.left &&
+        !keys.current.right &&
+        !keys.current.fire &&
+        !sitting;
+      const meleeRightNeutral =
+        playerAnim === "idle" &&
+        p.face > 0 &&
+        lastMeleeDirection.current > 0 &&
+        frame < meleeNeutralUntilFrame.current &&
+        !keys.current.left &&
+        !keys.current.right &&
+        !keys.current.fire &&
+        !sitting;
+      const visualKey = `${meleeRightNeutral ? "meleeRightNeutral" : meleeLeftNeutral ? "meleeLeftNeutral" : jumpRight ? "jumpRight" : jumpLeft ? "jumpLeft" : landRight ? "landRight" : landLeft ? "landLeft" : playerAnim}:${p.face > 0 ? "right" : "left"}:${sitting ? "sit" : "stand"}`;
+      if (playerVisualKey.current !== visualKey) {
+        playerVisualKey.current = visualKey;
+        playerVisualStartFrame.current = frame;
+      }
+      const playerFrame = Math.max(0, frame - playerVisualStartFrame.current);
+      const jumpRightFrame = Math.min(playerFrame, jumpRightFrames.length - 1);
+      const jumpLeftFrame = Math.min(playerFrame, jumpLeftFrames.length - 1);
+      const meleeFrame = meleeFrameChoice.current % 2;
+      const drawCenteredPlayerSprite = (anim: AnimName, spriteFrame: number, sourceWidth: number, visibleCenterX: number) => {
+        const drawW = 186;
+        const drawH = sitting ? 78 : 104;
+        const playerCenterX = p.x + p.w / 2;
+        const drawX = playerCenterX - (visibleCenterX / sourceWidth) * drawW;
+        return drawSprite(anim, spriteFrame, drawX, p.y + p.h - drawH, drawW, drawH, 1);
+      };
+      const playerDrawn = jumpRight
+        ? drawCenteredPlayerSprite("jumpRight", jumpRightFrame, 1440, 721)
+        : jumpLeft
+        ? drawCenteredPlayerSprite("jumpLeft", jumpLeftFrame, 1440, 690.5)
+        : meleeRight
+          ? drawCenteredPlayerSprite("meleeRight", meleeFrame, 1440, meleeRightFrameCenters[meleeFrame] ?? 760.5)
+        : meleeLeft
+          ? drawCenteredPlayerSprite("meleeLeft", meleeFrame, 1440, meleeLeftFrameCenters[meleeFrame] ?? 674)
+        : meleeRightNeutral
+          ? drawCenteredPlayerSprite("meleeRightNeutral", 0, 1440, meleeRightNeutralCenter)
+        : meleeLeftNeutral
+          ? drawCenteredPlayerSprite("meleeLeftNeutral", 0, 1440, meleeLeftNeutralCenter)
+        : landRight
+          ? drawCenteredPlayerSprite("jumpRight", 0, 1440, 721)
+        : landLeft
+          ? drawCenteredPlayerSprite("jumpLeft", 0, 1440, 690.5)
+        : idleRight
+        ? playerFrame < idleRightStillFrames.length
+          ? drawCenteredPlayerSprite("idleRightStill", playerFrame, 1440, 669)
+          : drawCenteredPlayerSprite("idleRight", playerFrame - idleRightStillFrames.length, 824, 494.5)
+        : idleLeft
+          ? playerFrame < idleLeftStillFrames.length
+            ? drawCenteredPlayerSprite("idleLeftStill", playerFrame, 1440, 771)
+            : drawCenteredPlayerSprite("idleLeft", playerFrame - idleLeftStillFrames.length, 824, 412)
+        : runRight
+        ? drawCenteredPlayerSprite("runRight", playerFrame, 824, 412)
+        : runLeft
+          ? drawCenteredPlayerSprite("runLeft", playerFrame, 824, 412)
+        : drawSprite(playerAnim, playerFrame, p.x - 35, p.y - 32, 114, 104, -p.face, playerAnim === "dead");
       if (!playerDrawn) drawFallbackHero(p);
       if (p.freeze > 0) {
         ctx.fillStyle = "rgba(169,238,255,.22)";
@@ -3181,10 +3782,27 @@ export default function Home() {
         ctx.fillText(won ? "Press Restart to play again" : "Use Restart Level or Quit", WIDTH / 2, 285);
         ctx.textAlign = "left";
       }
+
+      if (pausedRef.current && screen === "playing" && !won && !gameOver) {
+        ctx.fillStyle = "rgba(0,0,0,.55)";
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        ctx.fillStyle = "#fff";
+        ctx.font = "900 56px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Paused", WIDTH / 2, HEIGHT / 2 - 12);
+        ctx.font = "700 20px Arial";
+        ctx.fillText("Press P to continue", WIDTH / 2, HEIGHT / 2 + 34);
+        ctx.textAlign = "left";
+      }
     };
 
     const tick = () => {
       if (screen === "playing" && !won) {
+        if (pausedRef.current) {
+          draw();
+          raf.current = requestAnimationFrame(tick);
+          return;
+        }
         const p = player.current;
         const map = level.current;
         const wasGrounded = p.grounded;
@@ -3216,12 +3834,13 @@ export default function Home() {
           raf.current = requestAnimationFrame(tick);
           return;
         }
-        const moveDir = (keys.current.right ? 1 : 0) - (keys.current.left ? 1 : 0);
+        const sitting = keys.current.sit && p.grounded;
+        const moveDir = sitting ? 0 : (keys.current.right ? 1 : 0) - (keys.current.left ? 1 : 0);
         const freezeSlow = p.freeze > 0 ? 0.56 : 1;
         const carriedLongJump = p.longJump > 0 && moveDir === p.face && !p.grounded;
         p.vx = moveDir * (carriedLongJump ? RUN_JUMP_SPEED : WALK_SPEED) * freezeSlow;
         if (p.vx !== 0) p.face = p.vx > 0 ? 1 : -1;
-        if (keys.current.jump && p.grounded) {
+        if (keys.current.jump && p.grounded && !sitting) {
           const runningJump = moveDir !== 0;
           p.vy = runningJump ? -15.6 : -15;
           p.grounded = false;
@@ -3231,12 +3850,15 @@ export default function Home() {
         }
         if (keys.current.kick && p.attack <= 0) {
           p.attack = 18;
+          lastMeleeDirection.current = p.face < 0 ? -1 : 1;
+          meleeNeutralUntilFrame.current = 0;
           playSound("kick");
         }
         if (keys.current.fire && p.fire > 0 && p.fireCooldown <= 0) {
+          const fireY = p.y + (sitting ? 36 : 22);
           projectiles.current.push({
             x: p.x + (p.face > 0 ? p.w : -22),
-            y: p.y + 22,
+            y: fireY,
             w: 18,
             h: 10,
             vx: p.face * 9,
@@ -3244,9 +3866,13 @@ export default function Home() {
           });
           p.fire -= 1;
           p.fireCooldown = 18;
-          playSound("laser");
+          playFireSound();
         }
+        const previousAttack = p.attack;
         p.attack = Math.max(0, p.attack - 1);
+        if (previousAttack > 0 && p.attack <= 0) {
+          meleeNeutralUntilFrame.current = Math.floor(performance.now() / 85) + 59;
+        }
         p.hurt = Math.max(0, p.hurt - 1);
         p.land = Math.max(0, p.land - 1);
         p.fireCooldown = Math.max(0, p.fireCooldown - 1);
@@ -3259,7 +3885,9 @@ export default function Home() {
         p.x = Math.max(0, Math.min(LEVEL_END, p.x + p.vx));
         const activeBoss = boss.current;
         const bossFightLocked = Boolean(map.finalCastle && activeBoss?.active && activeBoss.alive && !activeBoss.defeated && activeBoss.biome !== "forest");
+        const forestBossCanvasLocked = Boolean(map.finalCastle && activeBoss?.active && activeBoss.alive && !activeBoss.defeated && activeBoss.biome === "forest");
         if (bossFightLocked) p.x = clampBossArenaX(p.x, p.w);
+        if (forestBossCanvasLocked) p.x = Math.max(FOREST_BOSS_CAMERA_X, Math.min(FOREST_BOSS_CAMERA_X + WIDTH - p.w, p.x));
         p.y += p.vy;
         p.grounded = false;
 
@@ -3320,7 +3948,7 @@ export default function Home() {
         map.powerUps.forEach((powerUp) => {
           if (!powerUp.taken && overlaps(p, powerUp)) {
             powerUp.taken = true;
-            p.fire += 18;
+            p.fire += 5;
             playSound("powerup");
             setHud((value) => ({ ...value, message: "Fire power ready" }));
           }
@@ -3383,7 +4011,12 @@ export default function Home() {
               if (Math.abs(delta) <= maxStep) return clamped;
               return bossState.x + Math.sign(delta) * maxStep;
             };
+            const fixedForestCameraX = FOREST_BOSS_CAMERA_X;
+            const visualSafeBossLeft = fixedForestCameraX - FOREST_BOSS_DRAW_X_OFFSET;
+            const visualSafeBossRight = fixedForestCameraX + WIDTH - FOREST_BOSS_DRAW_W - FOREST_BOSS_DRAW_X_OFFSET;
+            const clampForestBossVisualX = (x: number) => Math.max(visualSafeBossLeft, Math.min(visualSafeBossRight, clampForestBossX(x)));
             const platformIsSafeForBoss = (platform: Entity) => {
+              if (platform.bossIgnore) return false;
               const landingZone = {
                 x: platform.x + 28,
                 y: platform.y - bossState.h - 6,
@@ -3479,10 +4112,241 @@ export default function Home() {
             };
             bossState.vulnerable = Math.max(0, bossState.vulnerable - 1);
             bossState.slam = Math.max(0, bossState.slam - 1);
-            bossState.meleeWindup = Math.max(0, bossState.meleeWindup - 1);
-            bossState.meleeCooldown = Math.max(0, bossState.meleeCooldown - 1);
+            bossState.meleeWindup = 0;
+            bossState.meleeCooldown = 0;
             bossState.hurt = Math.max(0, bossState.hurt - 1);
-            if (bossState.phase === "entering") {
+            const useSimpleForestBossActions = true;
+            if (useSimpleForestBossActions) {
+              bossState.attackTimer = Math.max(0, bossState.attackTimer - 1);
+              bossState.intro = Math.max(0, bossState.intro - 1);
+              const playerCenter = p.x + p.w / 2;
+
+              if (bossState.phase === "entering") {
+                const entrancePlatform = defaultBossPlatform ?? currentBossPlatform;
+                const rightGroundX = entrancePlatform
+                  ? clampForestBossVisualX(entrancePlatform.x + entrancePlatform.w - bossState.w - 8)
+                  : clampForestBossVisualX(BOSS_ARENA_RIGHT - bossState.w);
+                bossState.vy = Math.min(bossState.vy + 0.09, 1.7);
+                bossState.y += bossState.vy;
+                bossState.x += (rightGroundX - bossState.x) * 0.035;
+                bossState.groundY = entrancePlatform ? platformLandingY(entrancePlatform) : bossState.groundY;
+                if (bossState.y >= bossState.groundY) {
+                  bossState.y = bossState.groundY;
+                  bossState.x = rightGroundX;
+                  bossState.vx = 0;
+                  bossState.vy = 0;
+                  bossState.jumpFrames = 0;
+                  bossState.slam = 0;
+                  bossState.vulnerable = 0;
+                  bossState.phase = "rising";
+                  bossState.face = 1;
+                  bossState.targetX = bossState.x;
+                  bossState.targetY = FOREST_BOSS_FLY_Y;
+                  bossState.attackTimer = 80;
+                  bossState.intro = 18;
+                  beep(72, 0.18, "sawtooth", 0.1, -28);
+                  setHud((value) => ({ ...value, message: "Root Guardian rises into the air." }));
+                }
+              } else if (bossState.phase === "rising") {
+                bossState.x = bossState.targetX;
+                bossState.vx = 0;
+                bossState.vy = Math.max(bossState.vy - 0.09, -1.7);
+                bossState.y += bossState.vy;
+                if (bossState.y <= bossState.targetY) {
+                  bossState.y = bossState.targetY;
+                  bossState.vy = 0;
+                  bossState.face = 1;
+                  bossState.phase = "flyingLeft";
+                  bossState.targetX = visualSafeBossLeft;
+                  bossState.attackTimer = 80;
+                  setHud((value) => ({ ...value, message: "Root Guardian flies left across the sky." }));
+                }
+              } else if (bossState.phase === "flyingLeft") {
+                bossState.face = 1;
+                bossState.vx = -1.7;
+                bossState.vy = 0;
+                bossState.y = FOREST_BOSS_FLY_Y;
+                bossState.x = Math.max(bossState.targetX, bossState.x + bossState.vx);
+                if (bossState.x <= bossState.targetX + 1.5) {
+                  bossState.x = bossState.targetX;
+                  bossState.vx = 0;
+                  bossState.phase = "descending";
+                  bossState.targetY = bossState.groundY;
+                  setHud((value) => ({ ...value, message: "Root Guardian descends to the left ground." }));
+                }
+              } else if (bossState.phase === "risingRight") {
+                bossState.face = -1;
+                bossState.x = bossState.targetX;
+                bossState.vx = 0;
+                bossState.vy = Math.max(bossState.vy - 0.09, -1.7);
+                bossState.y += bossState.vy;
+                if (bossState.y <= FOREST_BOSS_FLY_Y) {
+                  bossState.y = FOREST_BOSS_FLY_Y;
+                  bossState.vy = 0;
+                  bossState.phase = "flyingRight";
+                  bossState.targetX = visualSafeBossRight;
+                  setHud((value) => ({ ...value, message: "Root Guardian flies right across the sky." }));
+                }
+              } else if (bossState.phase === "flyingRight") {
+                bossState.face = -1;
+                bossState.vx = 1.7;
+                bossState.vy = 0;
+                bossState.y = FOREST_BOSS_FLY_Y;
+                bossState.x = Math.min(bossState.targetX, bossState.x + bossState.vx);
+                if (bossState.x >= bossState.targetX - 1.5) {
+                  bossState.x = bossState.targetX;
+                  bossState.vx = 0;
+                  bossState.phase = "descending";
+                  bossState.targetY = bossState.groundY;
+                  setHud((value) => ({ ...value, message: "Root Guardian descends to the right ground." }));
+                }
+              } else if (bossState.phase === "jumping") {
+                  const flightPlatform = currentBossPlatform ?? defaultBossPlatform;
+                  const leftEdge = clampForestBossVisualX(flightPlatform ? flightPlatform.x + 8 : bossState.targetX);
+                  const rightEdge = clampForestBossVisualX(flightPlatform ? flightPlatform.x + flightPlatform.w - bossState.w - 8 : bossState.targetX);
+                  const flightDir = bossState.targetX > bossState.x ? 1 : -1;
+                  const landingEdge = flightDir > 0 ? rightEdge : leftEdge;
+                  bossState.targetX = landingEdge;
+                  bossState.groundY = flightPlatform ? platformLandingY(flightPlatform) : bossState.groundY;
+                  bossState.targetY = FOREST_BOSS_FLY_Y;
+                  bossState.vx = flightDir * 1.2;
+                  bossState.x = clampForestBossX(flightDir > 0 ? Math.min(landingEdge, bossState.x + bossState.vx) : Math.max(landingEdge, bossState.x + bossState.vx));
+                  bossState.vy += (bossState.targetY - bossState.y) * 0.035;
+                  bossState.vy *= 0.86;
+                  bossState.y += bossState.vy;
+                  if ((flightDir > 0 && bossState.x >= landingEdge - 1.5) || (flightDir < 0 && bossState.x <= landingEdge + 1.5)) {
+                    bossState.x = landingEdge;
+                    bossState.y = bossState.groundY;
+                    bossState.vx = 0;
+                    bossState.vy = 0;
+                    bossState.face = flightDir > 0 ? -1 : 1;
+                    bossState.phase = "breathing";
+                    bossState.attackTimer = 90;
+                    bossState.breathShots = 10;
+                    bossState.intro = 45;
+                    setHud((value) => ({ ...value, message: "Root Guardian turns and breathes fire!" }));
+                  }
+              } else if (bossState.phase === "descending") {
+                bossState.face = bossState.x > (visualSafeBossLeft + visualSafeBossRight) / 2 ? -1 : 1;
+                bossState.vx = 0;
+                bossState.vy = Math.min(bossState.vy + 0.09, 1.7);
+                bossState.y += bossState.vy;
+                if (bossState.y >= bossState.groundY) {
+                  bossState.y = bossState.groundY;
+                  bossState.vy = 0;
+                  bossState.targetY = bossState.groundY;
+                  bossState.face = bossState.x > (visualSafeBossLeft + visualSafeBossRight) / 2 ? 1 : -1;
+                  bossState.phase = "breathing";
+                  bossState.attackTimer = 30;
+                  bossState.breathShots = 10;
+                  bossState.intro = 0;
+                  setHud((value) => ({ ...value, message: bossState.face > 0 ? "Root Guardian turns left and targets Alex." : "Root Guardian turns right and targets Alex." }));
+                }
+              } else if (bossState.phase === "breathing") {
+                const breathingPlatform = currentBossPlatform ?? defaultBossPlatform;
+                bossState.x = clampForestBossVisualX(breathingPlatform ? clampBossToPlatform(breathingPlatform, bossState.x) : bossState.x);
+                if (breathingPlatform && platformContainsBoss(breathingPlatform, -64)) {
+                  bossState.y = platformLandingY(breathingPlatform);
+                  bossState.groundY = bossState.y;
+                } else {
+                  bossState.y = bossState.groundY;
+                }
+                bossState.vx = 0;
+                bossState.vy = 0;
+                const playerNearDragon = Math.abs(p.x + p.w / 2 - (bossState.x + bossState.w / 2)) < 190 && Math.abs(p.y + p.h - (bossState.y + bossState.h)) < 95;
+                const playerInFrontOfDragon = bossState.face > 0 ? playerCenter < bossState.x + bossState.w / 2 : playerCenter > bossState.x + bossState.w / 2;
+                if (playerNearDragon && p.hurt <= 0) {
+                  damagePlayer(18, bossState.x + bossState.w / 2);
+                  setHud((value) => ({ ...value, message: "Too close to the dragon!" }));
+                }
+                if (playerNearDragon || !playerInFrontOfDragon) {
+                  bossState.attackTimer = Math.max(bossState.attackTimer, 30);
+                } else if (bossState.attackTimer <= 0 && bossState.breathShots > 0) {
+                  const face = bossState.face >= 0 ? 1 : -1;
+                  const visualLeft = bossState.x + FOREST_BOSS_DRAW_X_OFFSET;
+                  const visualRight = bossState.x + FOREST_BOSS_DRAW_X_OFFSET + FOREST_BOSS_DRAW_W;
+                  const visualTop = bossState.y + FOREST_BOSS_DRAW_Y_OFFSET;
+                  const mouthX = face > 0 ? visualRight - 120 : visualLeft + 92;
+                  const mouthY = visualTop + 275;
+                  const targetX = p.x + p.w / 2;
+                  const targetY = p.y + 8;
+                  const dx = targetX - mouthX;
+                  const dy = targetY - mouthY;
+                  const distance = Math.max(1, Math.hypot(dx, dy));
+                  const speed = 8.4;
+                  bossProjectiles.current.push({
+                    x: mouthX,
+                    y: mouthY,
+                    w: 28,
+                    h: 28,
+                    vx: (dx / distance) * speed,
+                    vy: (dy / distance) * speed,
+                    life: 150,
+                    kind: "fire",
+                  });
+                  bossState.breathShots -= 1;
+                  bossState.attackTimer = 90;
+                  beep(150, 0.07, "sawtooth", 0.08, -42);
+                } else if (bossState.breathShots <= 0 && bossState.attackTimer <= 0) {
+                  const bossAirPlatforms = map.platforms.filter((platform) => platform.bossIgnore);
+                  const topAirY = bossAirPlatforms.reduce((top, platform) => Math.min(top, platform.y), Number.POSITIVE_INFINITY);
+                  const topAirPlatforms = bossAirPlatforms.filter((platform) => Math.abs(platform.y - topAirY) < 4);
+                  const fireSpawnPlatforms = topAirPlatforms.length ? topAirPlatforms : bossAirPlatforms;
+                  for (let index = 0; index < 1 && fireSpawnPlatforms.length; index += 1) {
+                    const platform = fireSpawnPlatforms[Math.floor(Math.random() * fireSpawnPlatforms.length)];
+                    map.powerUps.push({
+                      x: platform.x + 18 + Math.random() * Math.max(1, platform.w - 64),
+                      y: platform.y - 34,
+                      w: 28,
+                      h: 28,
+                      kind: "fire",
+                    });
+                  }
+                  const bossOnRightSide = bossState.x > (visualSafeBossLeft + visualSafeBossRight) / 2;
+                  bossState.phase = bossOnRightSide ? "rising" : "risingRight";
+                  bossState.targetX = bossState.x;
+                  bossState.targetY = FOREST_BOSS_FLY_Y;
+                  bossState.vy = 0;
+                  bossState.attackTimer = 80;
+                  setHud((value) => ({ ...value, message: bossOnRightSide ? "Root Guardian rises to fly left again." : "Root Guardian rises to fly right again." }));
+                }
+              } else if (bossState.phase === "vulnerable") {
+                const groundPlatform = currentBossPlatform ?? defaultBossPlatform;
+                bossState.phase = "chasing";
+                bossState.vx = 0;
+                bossState.vy = 0;
+                bossState.jumpFrames = 0;
+                bossState.slam = 0;
+                bossState.vulnerable = 0;
+                bossState.attackTimer = 80;
+                bossState.intro = 8;
+                if (groundPlatform) {
+                  bossState.x = settleBossToPlatformX(groundPlatform, 16);
+                  bossState.y = platformLandingY(groundPlatform);
+                  bossState.groundY = bossState.y;
+                } else {
+                  bossState.y = bossState.groundY;
+                }
+              } else if (bossState.phase === "chasing") {
+                const playerCenter = p.x + p.w / 2;
+                const bossCenter = bossState.x + bossState.w / 2;
+                const chaseDir = playerCenter >= bossCenter ? 1 : -1;
+                const walkPlatform = currentBossPlatform ?? defaultBossPlatform;
+                const walkSpeed = bossState.health <= Math.ceil(bossState.maxHealth * 0.5) ? 1.55 : 1.18;
+                bossState.phase = "chasing";
+                bossState.targetX = playerCenter - bossState.w / 2;
+                bossState.targetY = walkPlatform ? platformLandingY(walkPlatform) : bossState.groundY;
+                bossState.vx = chaseDir * walkSpeed;
+                bossState.x = walkPlatform && platformContainsBoss(walkPlatform, -28)
+                  ? clampBossToPlatform(walkPlatform, bossState.x + bossState.vx)
+                  : clampForestBossX(bossState.x + bossState.vx);
+                if (walkPlatform && platformContainsBoss(walkPlatform, -28)) {
+                  bossState.y = platformLandingY(walkPlatform);
+                  bossState.groundY = bossState.y;
+                }
+                if (bossState.attackTimer <= 0 && bossState.intro <= 0) bossState.attackTimer = 80;
+              }
+            } else if (bossState.phase === "entering") {
               bossState.vy += 0.95;
               bossState.y += bossState.vy;
               if (defaultBossPlatform) bossState.x = settleBossToPlatformX(defaultBossPlatform, 8);
@@ -3860,10 +4724,11 @@ export default function Home() {
             setHud((value) => ({ ...value, message: bossState.biome === "ice" ? "Fire melts armor. Keep shooting." : "No damage. Wait for the weak point." }));
           }
           const forestClawActive = bossState.biome === "forest" && bossState.meleeWindup > 0;
-          if (overlaps(p, bossState) && bossState.hurt <= 0 && !bossWasHit && !forestClawActive) damagePlayer(20, bossState.x + bossState.w / 2);
+          if (bossState.biome !== "forest" && overlaps(p, bossState) && bossState.hurt <= 0 && !bossWasHit && !forestClawActive) damagePlayer(20, bossState.x + bossState.w / 2);
         }
         if (bossState?.active && bossState.phase === "defeated") {
-          const maxDeathFrame = bossState.biome === "forest" ? ROOT_GUARDIAN_SPRITES.dead.length - 1 : FROST_WARDEN_SPRITES.dead.length - 1;
+          const forestDeathFrames = bossState.face > 0 ? ROOT_GUARDIAN_SPRITES.deadRight : ROOT_GUARDIAN_SPRITES.deadLeft;
+          const maxDeathFrame = bossState.biome === "forest" ? forestDeathFrames.length - 1 : FROST_WARDEN_SPRITES.dead.length - 1;
           if (bossState.deathFrame < maxDeathFrame) {
             const frameAdvance = bossState.biome === "forest" ? 0.32 : 0.26;
             bossState.deathFrame = Math.min(maxDeathFrame, bossState.deathFrame + frameAdvance);
@@ -3874,12 +4739,22 @@ export default function Home() {
           .map((pillar) => ({ ...pillar, life: pillar.life - 1 }))
           .filter((pillar) => pillar.life > 0);
         bossProjectiles.current = bossProjectiles.current
-          .map((shot) => ({ ...shot, x: shot.x + shot.vx, y: shot.y + shot.vy, life: shot.life - 1, vy: shot.kind === "shard" ? shot.vy + 0.2 : 0 }))
-          .filter((shot) => shot.life > 0 && shot.x > camera.current - 120 && shot.x < camera.current + WIDTH + 140 && shot.y < HEIGHT + 120);
+          .map((shot) => ({ ...shot, x: shot.x + shot.vx, y: shot.y + shot.vy, life: shot.life - 1, vy: shot.kind === "shard" ? shot.vy + 0.2 : shot.kind === "wave" ? 0 : shot.vy }))
+          .filter((shot) => shot.life > 0 && shot.x > camera.current - 360 && shot.x < camera.current + WIDTH + 360 && shot.y > -180 && shot.y < HEIGHT + 180);
         for (const shot of bossProjectiles.current) {
           if (overlaps(p, shot) && p.hurt <= 0) {
             if (shot.kind === "wave") p.freeze = Math.max(p.freeze, 75);
-            damagePlayer(shot.kind === "wave" ? 20 : 16, shot.x + shot.w / 2);
+            if (shot.kind === "fire") {
+              const nonLethalFireDamage = Math.min(FOREST_BOSS_FIREBALL_DAMAGE, Math.max(0, p.power - 1));
+              if (nonLethalFireDamage > 0) {
+                damagePlayer(nonLethalFireDamage, shot.x + shot.w / 2);
+              } else {
+                p.hurt = 48;
+                setHud((value) => ({ ...value, message: "Dragon fire grazed Alex. Power is critical." }));
+              }
+            } else {
+              damagePlayer(shot.kind === "wave" ? 20 : 16, shot.x + shot.w / 2);
+            }
             shot.life = 0;
           }
         }
@@ -4000,33 +4875,46 @@ export default function Home() {
         if (overlaps(p, map.goal) && !levelTransition.current) {
           const bossState = boss.current;
           if (map.finalCastle && bossState && (!bossState.defeated || bossState.alive)) {
-            startAudio();
-            startBossMusic();
-            if (bossState.alive) {
-              bossState.active = true;
-              if (bossState.biome === "forest" && bossState.phase === "idle") {
-                bossState.phase = "entering";
-                bossState.y = -170;
-                bossState.x = Math.max(0, Math.min(LEVEL_END - bossState.w, p.x + 240));
-                bossState.vx = 0;
-                bossState.vy = 0;
-              } else if (bossState.phase === "idle") {
-                bossState.phase = "chasing";
+            const forestBossWaitingForCamera =
+              bossState.biome === "forest" &&
+              !bossState.active &&
+              Math.max(0, Math.min(LEVEL_END - WIDTH + 140, p.x - 280)) < FOREST_BOSS_CAMERA_X - 1;
+            if (forestBossWaitingForCamera) {
+              setHud((value) => ({ ...value, message: "Move right to frame the arena before the guardian enters." }));
+            } else {
+              startAudio();
+              startBossMusic();
+              if (bossState.alive) {
+                const wasInactive = !bossState.active;
+                bossState.active = true;
+                if (wasInactive && bossState.biome === "forest" && bossState.phase === "idle") {
+                  bossState.phase = "entering";
+                  bossState.y = -230;
+                  bossState.x = Math.max(0, Math.min(LEVEL_END - bossState.w, FOREST_BOSS_CAMERA_X + WIDTH + 120));
+                  bossState.face = 1;
+                  bossState.vx = 0;
+                  bossState.vy = 0;
+                } else if (wasInactive && bossState.phase === "idle") {
+                  bossState.phase = "chasing";
+                }
+                if (wasInactive) {
+                  bossState.intro = 45;
+                  bossState.attackTimer = bossState.biome === "forest" ? 95 : 80;
+                  bossState.jumpFrames = 0;
+                  beep(58, 0.26, "sawtooth", 0.13, -18);
+                  window.setTimeout(() => beep(116, 0.2, "square", 0.08, -36), 120);
+                  setHud((value) => ({ ...value, message: bossState.biome === "forest" ? "Root Guardian descends from the upper right" : `${biomeStyle(bossState.biome).boss} blocks the gate` }));
+                }
               }
-              bossState.intro = 45;
-              bossState.attackTimer = bossState.biome === "forest" ? 95 : 80;
-              bossState.jumpFrames = 0;
-              camera.current = 4260;
-              beep(58, 0.26, "sawtooth", 0.13, -18);
-              window.setTimeout(() => beep(116, 0.2, "square", 0.08, -36), 120);
-              setHud((value) => ({ ...value, message: bossState.biome === "forest" ? "Root Guardian is falling from above" : `${biomeStyle(bossState.biome).boss} blocks the gate` }));
             }
           } else {
             completeLevel();
           }
         }
         const cameraBoss = boss.current;
-        if (map.finalCastle && cameraBoss?.active && cameraBoss.alive && !cameraBoss.defeated && cameraBoss.biome !== "forest") {
+        if (map.finalCastle && cameraBoss?.active && cameraBoss.alive && !cameraBoss.defeated && cameraBoss.biome === "forest") {
+          camera.current = FOREST_BOSS_CAMERA_X;
+        } else if (map.finalCastle && cameraBoss?.active && cameraBoss.alive && !cameraBoss.defeated) {
           camera.current = Math.max(BOSS_ARENA_LEFT - 40, Math.min(BOSS_ARENA_RIGHT - WIDTH + 120, p.x - 280));
         } else {
           camera.current = Math.max(0, Math.min(LEVEL_END - WIDTH + 140, p.x - 280));
@@ -4039,15 +4927,15 @@ export default function Home() {
 
     raf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf.current);
-  }, [assetsReady, damagePlayer, gameOver, hud, loseLife, playSound, screen, soundOn, startBossMusic, startLevelLoading, stopBossMusic, won]);
+  }, [assetsReady, damagePlayer, gameOver, hud, loseLife, playFireSound, playSound, screen, soundOn, startBossMusic, startLevelLoading, stopBossMusic, won]);
 
   const press = (key: ButtonKey, active: boolean) => {
-    if (screen !== "playing") return;
+    if (screen !== "playing" || pausedRef.current) return;
     startAudio();
     keys.current[key] = active;
   };
   const clickFire = () => {
-    if (screen !== "playing") return;
+    if (screen !== "playing" || pausedRef.current) return;
     startAudio();
     keys.current.fire = true;
     window.setTimeout(() => {
@@ -4063,7 +4951,7 @@ export default function Home() {
           <div className="top-actions" onClick={(event) => event.stopPropagation()}>
             <h1>{levelLabel}</h1>
             <div className="top-buttons">
-              <button onClick={soundOn ? stopAudio : startAudio}>{soundOn ? "Sound On" : "Sound Off"}</button>
+              <button onClick={soundOn ? stopAudio : () => startAudio(true)}>{soundOn ? "Sound On" : "Sound Off"}</button>
               <button onClick={returnToMenu}>Menu</button>
               <button onClick={restart}>Restart</button>
             </div>
