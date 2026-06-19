@@ -51,6 +51,7 @@ type Boss = Entity & {
     | "entering"
     | "chasing"
     | "clawing"
+    | "laughing"
     | "jumping"
     | "rising"
     | "flyingLeft"
@@ -81,7 +82,10 @@ type Boss = Entity & {
   meleeWindup: number;
   meleeCooldown: number;
   meleeStyle: 1 | 2;
+  meleeSide: "front" | "back";
   breathShots: number;
+  breathStage: "idle" | "ready" | "cycle" | "done" | "postIdle";
+  breathAnimFrame: number;
 };
 type Player = Entity & {
   vx: number;
@@ -121,6 +125,13 @@ type AnimName =
   | "idleRightStill"
   | "idleLeft"
   | "idleLeftStill"
+  | "sitRight"
+  | "sitLeft"
+  | "fireRight"
+  | "fireLeft"
+  | "firePowerUp"
+  | "fireAmmoCounter"
+  | "playerFireProjectile"
   | "run"
   | "runRight"
   | "runLeft"
@@ -160,12 +171,22 @@ type BossAnimName =
   | "deadLeft"
   | "laughRight"
   | "laughLeft"
+  | "idleDragonRight"
+  | "idleDragonLeft"
   | "fireReadyRight"
   | "fireReadyLeft"
+  | "fireCycleRight"
+  | "fireCycleLeft"
+  | "fireDoneRight"
+  | "fireDoneLeft"
   | "meleeFront1Right"
   | "meleeFront1Left"
   | "meleeFront2Right"
-  | "meleeFront2Left";
+  | "meleeFront2Left"
+  | "meleeBack1Right"
+  | "meleeBack1Left"
+  | "meleeBack2Right"
+  | "meleeBack2Left";
 type FrostBossAnimName = Exclude<
   BossAnimName,
   | "flyLeft"
@@ -174,12 +195,22 @@ type FrostBossAnimName = Exclude<
   | "deadLeft"
   | "laughRight"
   | "laughLeft"
+  | "idleDragonRight"
+  | "idleDragonLeft"
   | "fireReadyRight"
   | "fireReadyLeft"
+  | "fireCycleRight"
+  | "fireCycleLeft"
+  | "fireDoneRight"
+  | "fireDoneLeft"
   | "meleeFront1Right"
   | "meleeFront1Left"
   | "meleeFront2Right"
   | "meleeFront2Left"
+  | "meleeBack1Right"
+  | "meleeBack1Left"
+  | "meleeBack2Right"
+  | "meleeBack2Left"
 >;
 type Level = {
   id: string;
@@ -220,9 +251,14 @@ const FOREST_BOSS_DRAW_H = 520;
 const FOREST_BOSS_DRAW_X_OFFSET = -173;
 const FOREST_BOSS_DRAW_Y_OFFSET = -362;
 const FOREST_BOSS_FLY_Y = 73;
+const FOREST_IDLE_FRAME_TICKS = 2;
+const FOREST_FIRE_READY_FRAME_TICKS = 3;
+const FOREST_FIRE_CYCLE_FRAME_TICKS = 7;
+const FOREST_FIRE_DONE_FRAME_TICKS = 2;
 const BOSS_ARENA_LEFT = 4300;
 const FOREST_BOSS_CAMERA_X = BOSS_ARENA_LEFT - 120;
 const BOSS_ARENA_RIGHT = LEVEL_END - 18;
+const FINAL_FOREST_FALL_PIT = { x: 4580, w: 300 };
 const FOREST_BOSS_PATROL_MIN = BOSS_ARENA_LEFT;
 const FOREST_BOSS_PATROL_MAX = BOSS_ARENA_RIGHT;
 const FOREST_BOSS_WALK_SPEED = 1.55;
@@ -262,7 +298,10 @@ const makeBoss = (biome: Biome): Boss => ({
   meleeWindup: 0,
   meleeCooldown: 0,
   meleeStyle: 1,
+  meleeSide: "front",
   breathShots: 0,
+  breathStage: "idle",
+  breathAnimFrame: 0,
 });
 const SPRITE_ROOT = "/assets/sprites/Free%20RPG%20Sprites/PNG_";
 const pad = (value: number) => value.toString().padStart(3, "0");
@@ -279,6 +318,13 @@ const idleRightFrames = Array.from({ length: 107 }, (_, index) => `/assets/sprit
 const idleRightStillFrames = Array.from({ length: 24 }, (_, index) => `/assets/sprites/player/idle-right-still/idle-right-still-${pad2(index)}.png`);
 const idleLeftFrames = Array.from({ length: 110 }, (_, index) => `/assets/sprites/player/idle-left/idle-left-${index.toString().padStart(3, "0")}.png`);
 const idleLeftStillFrames = Array.from({ length: 25 }, (_, index) => `/assets/sprites/player/idle-left-still/idle-left-still-${pad2(index)}.png`);
+const sitRightFrames = ["/assets/sprites/player/sit/right/player-sit-right-00.png?v=20260618-0530"];
+const sitLeftFrames = ["/assets/sprites/player/sit/left/player-sit-left-00.png?v=20260618-0530"];
+const fireRightFrames = ["/assets/sprites/player/fire/right/player-fire-right-00.png?v=20260618-current"];
+const fireLeftFrames = ["/assets/sprites/player/fire/left/player-fire-left-00.png?v=20260618-current"];
+const firePowerUpFrames = Array.from({ length: 32 }, (_, index) => `/assets/sprites/pickups/fire-power-up/fire-power-up-${index.toString().padStart(2, "0")}.png?v=20260618-0640`);
+const fireAmmoCounterFrames = ["/assets/sprites/hud/fire-ammo-counter.png?v=20260618-current"];
+const playerFireProjectileFrames = Array.from({ length: 5 }, (_, index) => `/assets/sprites/projectiles/player-fire/player-fire-${index.toString().padStart(2, "0")}.png?v=20260619-0149`);
 const runRightFrames = Array.from({ length: 13 }, (_, index) => `/assets/sprites/player/run-right/run-right-${pad2(index)}.png`);
 const runLeftFrames = Array.from({ length: 13 }, (_, index) => `/assets/sprites/player/run-left/run-left-${pad2(index)}.png`);
 const jumpRightFrames = Array.from({ length: 2 }, (_, index) => `/assets/sprites/player/jump-right/jump-right-${pad2(index)}.png`);
@@ -299,14 +345,24 @@ const rootGuardianHighResFrames = (animation: string, count: number) =>
   Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/highres/${animation}/root-guardian-${animation}-${index.toString().padStart(3, "0")}.png`);
 const rootGuardianFlyLeftFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/fly-left/root-guardian-fly-left-${index.toString().padStart(3, "0")}.png`);
 const rootGuardianFlyRightFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/fly-right/root-guardian-fly-right-${index.toString().padStart(3, "0")}.png`);
-const rootGuardianDeadRightFrames = Array.from({ length: 112 }, (_, index) => `/assets/sprites/bosses/root-guardian/dead-right/root-guardian-dead-right-${index.toString().padStart(3, "0")}.png`);
-const rootGuardianDeadLeftFrames = Array.from({ length: 112 }, (_, index) => `/assets/sprites/bosses/root-guardian/dead-left/root-guardian-dead-left-${index.toString().padStart(3, "0")}.png`);
-const rootGuardianLaughRightFrames = Array.from({ length: 130 }, (_, index) => `/assets/sprites/bosses/root-guardian/laugh-right/root-guardian-laugh-right-${index.toString().padStart(3, "0")}.png`);
-const rootGuardianLaughLeftFrames = Array.from({ length: 130 }, (_, index) => `/assets/sprites/bosses/root-guardian/laugh-left/root-guardian-laugh-left-${index.toString().padStart(3, "0")}.png`);
-const rootGuardianFireReadyRightFrames = Array.from({ length: 45 }, (_, index) => `/assets/sprites/bosses/root-guardian/fire-ready-right/root-guardian-fire-ready-right-${index.toString().padStart(3, "0")}.png`);
-const rootGuardianFireReadyLeftFrames = Array.from({ length: 45 }, (_, index) => `/assets/sprites/bosses/root-guardian/fire-ready-left/root-guardian-fire-ready-left-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianIdleLeftFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/idle/left/root-guardian-idle-left-${index.toString().padStart(3, "0")}.png?v=20260618-0413`);
+const rootGuardianIdleRightFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/idle/right/root-guardian-idle-right-${index.toString().padStart(3, "0")}.png?v=20260618-0413`);
+const rootGuardianFireFrames = (stage: "ready" | "cycle" | "done", direction: "left" | "right", count: number) =>
+  Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/fireball/${stage}/${direction}/root-guardian-fire-${stage}-${direction}-${index.toString().padStart(3, "0")}.png`);
+const rootGuardianFireReadyLeftFrames = rootGuardianFireFrames("ready", "left", 22);
+const rootGuardianFireReadyRightFrames = rootGuardianFireFrames("ready", "right", 22);
+const rootGuardianFireCycleLeftFrames = rootGuardianFireFrames("cycle", "left", 12);
+const rootGuardianFireCycleRightFrames = rootGuardianFireFrames("cycle", "right", 12);
+const rootGuardianFireDoneLeftFrames = rootGuardianFireFrames("done", "left", 41);
+const rootGuardianFireDoneRightFrames = rootGuardianFireFrames("done", "right", 41);
+const rootGuardianDeadRightFrames = Array.from({ length: 112 }, (_, index) => `/assets/sprites/bosses/root-guardian/dead/right/root-guardian-dead-right-${index.toString().padStart(3, "0")}.png?v=20260618-current`);
+const rootGuardianDeadLeftFrames = Array.from({ length: 112 }, (_, index) => `/assets/sprites/bosses/root-guardian/dead/left/root-guardian-dead-left-${index.toString().padStart(3, "0")}.png?v=20260618-current`);
+const rootGuardianLaughRightFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/laugh/right/root-guardian-laugh-right-${index.toString().padStart(3, "0")}.png?v=20260618-0536`);
+const rootGuardianLaughLeftFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/laugh/left/root-guardian-laugh-left-${index.toString().padStart(3, "0")}.png?v=20260618-0536`);
 const rootGuardianMeleeFrontFrames = (style: 1 | 2, direction: "left" | "right", count: number) =>
-  Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/melee-front/${style}/${direction}/root-guardian-melee-front-${style}-${direction}-${index.toString().padStart(3, "0")}.png`);
+  Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/melee-front/${style}/${direction}/root-guardian-melee-front-${style}-${direction}-${index.toString().padStart(3, "0")}.png?v=20260618-current`);
+const rootGuardianMeleeBackFrames = (style: 1 | 2, direction: "left" | "right", count: number) =>
+  Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/melee-back/${style}/${direction}/root-guardian-melee-back-${style}-${direction}-${index.toString().padStart(3, "0")}.png?v=20260618-current`);
 const rootGuardianSingleDragonFrame = ["/assets/sprites/bosses/root-guardian/single/root-guardian-dragon.png"];
 const AUDIO_ROOT = "/assets/audio/mixkit";
 const AUDIO: Record<SoundName | "music", string> = {
@@ -423,6 +479,13 @@ const SPRITES: Record<AnimName, string[]> = {
   idleRightStill: idleRightStillFrames,
   idleLeft: idleLeftFrames,
   idleLeftStill: idleLeftStillFrames,
+  sitRight: sitRightFrames,
+  sitLeft: sitLeftFrames,
+  fireRight: fireRightFrames,
+  fireLeft: fireLeftFrames,
+  firePowerUp: firePowerUpFrames,
+  fireAmmoCounter: fireAmmoCounterFrames,
+  playerFireProjectile: playerFireProjectileFrames,
   run: sequence("ADVENTURER/02-Run", "FR_Adventurer_Run", 10),
   runRight: runRightFrames,
   runLeft: runLeftFrames,
@@ -465,16 +528,26 @@ const ROOT_GUARDIAN_SPRITES: Record<BossAnimName, string[]> = {
   attack: rootGuardianSingleDragonFrame,
   hurt: rootGuardianSingleDragonFrame,
   dead: rootGuardianSingleDragonFrame,
-  deadRight: rootGuardianSingleDragonFrame,
-  deadLeft: rootGuardianSingleDragonFrame,
-  laughRight: rootGuardianSingleDragonFrame,
-  laughLeft: rootGuardianSingleDragonFrame,
-  fireReadyRight: rootGuardianSingleDragonFrame,
-  fireReadyLeft: rootGuardianSingleDragonFrame,
-  meleeFront1Right: rootGuardianSingleDragonFrame,
-  meleeFront1Left: rootGuardianSingleDragonFrame,
-  meleeFront2Right: rootGuardianSingleDragonFrame,
-  meleeFront2Left: rootGuardianSingleDragonFrame,
+  deadRight: rootGuardianDeadRightFrames,
+  deadLeft: rootGuardianDeadLeftFrames,
+  laughRight: rootGuardianLaughRightFrames,
+  laughLeft: rootGuardianLaughLeftFrames,
+  idleDragonRight: rootGuardianIdleRightFrames,
+  idleDragonLeft: rootGuardianIdleLeftFrames,
+  fireReadyRight: rootGuardianFireReadyRightFrames,
+  fireReadyLeft: rootGuardianFireReadyLeftFrames,
+  fireCycleRight: rootGuardianFireCycleRightFrames,
+  fireCycleLeft: rootGuardianFireCycleLeftFrames,
+  fireDoneRight: rootGuardianFireDoneRightFrames,
+  fireDoneLeft: rootGuardianFireDoneLeftFrames,
+  meleeFront1Right: rootGuardianMeleeFrontFrames(1, "right", 62),
+  meleeFront1Left: rootGuardianMeleeFrontFrames(1, "left", 62),
+  meleeFront2Right: rootGuardianMeleeFrontFrames(2, "right", 62),
+  meleeFront2Left: rootGuardianMeleeFrontFrames(2, "left", 62),
+  meleeBack1Right: rootGuardianMeleeBackFrames(1, "right", 62),
+  meleeBack1Left: rootGuardianMeleeBackFrames(1, "left", 62),
+  meleeBack2Right: rootGuardianMeleeBackFrames(2, "right", 62),
+  meleeBack2Left: rootGuardianMeleeBackFrames(2, "left", 62),
 };
 const FROST_WARDEN_SPRITES: Record<FrostBossAnimName, string[]> = {
   idle: numberedSequence("FROST_WARDEN_CUSTOM/01-Idle", 17),
@@ -941,8 +1014,10 @@ const enforceDedicatedBossArena = (level: Level) => {
   const arenaGroundY = 485;
   // Forest boss uses strict ground-combat arena to avoid hovering/altitude desync.
   if (level.biome === "forest") {
+    const pitEnd = FINAL_FOREST_FALL_PIT.x + FINAL_FOREST_FALL_PIT.w;
     level.platforms = [
-      { x: arenaLeft, y: arenaGroundY, w: arenaRight - arenaLeft, h: 110 },
+      { x: arenaLeft, y: arenaGroundY, w: FINAL_FOREST_FALL_PIT.x - arenaLeft, h: 110 },
+      { x: pitEnd, y: arenaGroundY, w: arenaRight - pitEnd, h: 110 },
       { x: FOREST_BOSS_CAMERA_X + 100, y: 372, w: 220, h: 24, bossIgnore: true },
       { x: FOREST_BOSS_CAMERA_X + 375, y: 244, w: 220, h: 24, bossIgnore: true },
       { x: FOREST_BOSS_CAMERA_X + 650, y: 372, w: 220, h: 24, bossIgnore: true },
@@ -957,7 +1032,10 @@ const enforceDedicatedBossArena = (level: Level) => {
   }
   level.bridges = [];
   level.water = [];
-  level.hazards = [];
+  level.hazards =
+    level.biome === "forest"
+      ? [{ x: FINAL_FOREST_FALL_PIT.x, y: arenaGroundY + 6, w: FINAL_FOREST_FALL_PIT.w, h: HEIGHT - arenaGroundY + 120 }]
+      : [];
   level.coins = [];
   level.powerUps = [];
   level.lifePoints = [];
@@ -1480,7 +1558,7 @@ export default function Home() {
     async (stage: number) => {
       const nextStage = Math.max(0, Math.min(WORLD_LEVELS.length - 1, stage));
       const theme = WORLD_LEVELS[nextStage] ?? WORLD_LEVELS[0];
-      const cacheKey = `${nextStage}:${theme.id}`;
+      const cacheKey = `${nextStage}:${theme.id}:assets-20260618-0536`;
       if (loadedLevelAssets.current[cacheKey]) return;
 
       const environmentSources = Array.from(new Set((ENVIRONMENT_ASSETS[theme.biome] ?? []).map((item) => item.src)));
@@ -1507,7 +1585,12 @@ export default function Home() {
         if (theme.biome === "forest") {
           await Promise.all(
             (Object.keys(ROOT_GUARDIAN_SPRITES) as BossAnimName[]).map(async (name) => {
-              if (!bossImages.current[name]?.length) bossImages.current[name] = await Promise.all(ROOT_GUARDIAN_SPRITES[name].map(loadImageAsset));
+              const sources = ROOT_GUARDIAN_SPRITES[name];
+              const currentFrames = bossImages.current[name];
+              const framesChanged =
+                currentFrames?.length !== sources.length ||
+                currentFrames.some((image, index) => !image.src.endsWith(sources[index]));
+              if (framesChanged) bossImages.current[name] = await Promise.all(sources.map(loadImageAsset));
             }),
           );
         } else if (theme.biome === "ice") {
@@ -2706,30 +2789,52 @@ export default function Home() {
         const forestMoveIntent = Math.abs((bossState.targetX ?? bossState.x) - bossState.x);
         const stationaryForestBoss = Math.abs(bossState.vx) < 0.08 && forestMoveIntent < 14 && forestBossGrounded && bossState.hurt <= 0;
         const forestShouldRun = bossState.phase === "chasing" && forestBossGrounded && bossState.hurt <= 0 && !clawing && (Math.abs(bossState.vx) > 0.06 || forestMoveIntent >= 14);
-        const forestDeadAnim: BossAnimName = bossState.face > 0 ? "deadRight" : "deadLeft";
-        const forestLaughAnim: BossAnimName = bossState.face > 0 ? "laughRight" : "laughLeft";
+        const forestDeadAnim: BossAnimName = bossState.face >= 0 ? "deadLeft" : "deadRight";
+        const forestLaughAnim: BossAnimName = bossState.face >= 0 ? "laughLeft" : "laughRight";
         const forestMeleeAnim: BossAnimName =
-          bossState.meleeStyle === 1
-            ? bossState.face >= 0
-              ? "meleeFront1Right"
-              : "meleeFront1Left"
-            : bossState.face >= 0
-              ? "meleeFront2Right"
-              : "meleeFront2Left";
+          bossState.meleeSide === "front"
+            ? bossState.meleeStyle === 1
+              ? bossState.face >= 0
+                ? "meleeFront1Left"
+                : "meleeFront1Right"
+              : bossState.face >= 0
+                ? "meleeFront2Left"
+                : "meleeFront2Right"
+            : bossState.meleeStyle === 1
+              ? bossState.face >= 0
+                ? "meleeBack1Left"
+                : "meleeBack1Right"
+              : bossState.face >= 0
+                ? "meleeBack2Left"
+                : "meleeBack2Right";
         const forestShouldLaugh = gameOver && bossState.alive && bossState.phase !== "defeated";
         const anim: BossAnimName =
           bossState.phase === "defeated"
             ? forestDeadAnim
             : forestShouldLaugh
               ? forestLaughAnim
-              : bossState.hurt > 0
-              ? "hurt"
+              : bossState.phase === "laughing"
+                ? forestLaughAnim
               : bossState.phase === "clawing"
                 ? forestMeleeAnim
               : bossState.phase === "breathing"
-                ? bossState.face >= 0
-                  ? "fireReadyRight"
-                  : "fireReadyLeft"
+                ? bossState.breathStage === "idle" || bossState.breathStage === "postIdle"
+                  ? bossState.face >= 0
+                    ? "idleDragonLeft"
+                    : "idleDragonRight"
+                : bossState.breathStage === "ready"
+                  ? bossState.face >= 0
+                    ? "fireReadyLeft"
+                    : "fireReadyRight"
+                  : bossState.breathStage === "cycle"
+                    ? bossState.face >= 0
+                      ? "fireCycleLeft"
+                      : "fireCycleRight"
+                    : bossState.face >= 0
+                      ? "fireDoneLeft"
+                      : "fireDoneRight"
+              : bossState.hurt > 0
+                ? "hurt"
               : bossState.phase === "flyingLeft"
                 ? "flyLeft"
               : bossState.phase === "flyingRight"
@@ -2763,17 +2868,20 @@ export default function Home() {
         const useForestFly = anim === "flyLeft" || anim === "flyRight";
         const useDirectionalForestDead = anim === "deadRight" || anim === "deadLeft";
         const useDirectionalForestLaugh = anim === "laughRight" || anim === "laughLeft";
-        const useDirectionalFireReady = anim === "fireReadyRight" || anim === "fireReadyLeft";
-        const useDirectionalMeleeFront = anim === "meleeFront1Right" || anim === "meleeFront1Left" || anim === "meleeFront2Right" || anim === "meleeFront2Left";
+        const useDirectionalFire = anim === "idleDragonRight" || anim === "idleDragonLeft" || anim === "fireReadyRight" || anim === "fireReadyLeft" || anim === "fireCycleRight" || anim === "fireCycleLeft" || anim === "fireDoneRight" || anim === "fireDoneLeft";
+        const useDirectionalMeleeFront = anim === "meleeFront1Right" || anim === "meleeFront1Left" || anim === "meleeFront2Right" || anim === "meleeFront2Left" || anim === "meleeBack1Right" || anim === "meleeBack1Left" || anim === "meleeBack2Right" || anim === "meleeBack2Left";
         const renderAnim: BossAnimName = useForestFly ? anim : anim;
-        const renderFrameStep = useForestFly || useDirectionalFireReady || useDirectionalMeleeFront ? 1 : useDirectionalForestLaugh ? 2 : forestFrameStep;
-        const renderBossFace = useForestFly || useDirectionalForestDead || useDirectionalForestLaugh || useDirectionalMeleeFront ? 1 : renderFace;
-        const fireReadyFrame = useDirectionalFireReady ? Math.max(0, Math.min(ROOT_GUARDIAN_SPRITES[renderAnim].length - 1, ROOT_GUARDIAN_SPRITES[renderAnim].length - Math.max(0, bossState.intro))) : undefined;
-        const meleeFrame = useDirectionalMeleeFront
-          ? Math.max(0, Math.min(ROOT_GUARDIAN_SPRITES[renderAnim].length - 1, ROOT_GUARDIAN_SPRITES[renderAnim].length + 1 - Math.max(0, bossState.meleeWindup)))
+        const renderFrameStep = useForestFly || useDirectionalFire || useDirectionalMeleeFront ? 1 : useDirectionalForestLaugh ? 2 : forestFrameStep;
+        const renderBossFace = useForestFly || useDirectionalForestDead || useDirectionalForestLaugh || useDirectionalFire || useDirectionalMeleeFront ? 1 : renderFace;
+        const fireFrameTicks = bossState.breathStage === "idle" || bossState.breathStage === "postIdle" ? FOREST_IDLE_FRAME_TICKS : bossState.breathStage === "ready" ? FOREST_FIRE_READY_FRAME_TICKS : bossState.breathStage === "cycle" ? FOREST_FIRE_CYCLE_FRAME_TICKS : FOREST_FIRE_DONE_FRAME_TICKS;
+        const fireFrame = useDirectionalFire
+          ? Math.max(0, Math.min(ROOT_GUARDIAN_SPRITES[renderAnim].length - 1, Math.floor(bossState.breathAnimFrame / fireFrameTicks)))
           : undefined;
-        const renderForcedFrame = forcedFrame ?? fireReadyFrame ?? meleeFrame;
-        const forestBossSpriteY = useDirectionalForestDead || useDirectionalForestLaugh || useDirectionalFireReady || useDirectionalMeleeFront
+        const meleeFrame = useDirectionalMeleeFront
+          ? Math.max(0, Math.min(ROOT_GUARDIAN_SPRITES[renderAnim].length - 1, ROOT_GUARDIAN_SPRITES[renderAnim].length - Math.max(0, bossState.meleeWindup)))
+          : undefined;
+        const renderForcedFrame = forcedFrame ?? fireFrame ?? meleeFrame;
+        const forestBossSpriteY = useDirectionalForestDead || useDirectionalForestLaugh || useDirectionalFire || useDirectionalMeleeFront
           ? bossState.groundY + bossState.h - FOREST_BOSS_DRAW_H
           : y + FOREST_BOSS_DRAW_Y_OFFSET;
         ctx.save();
@@ -3039,6 +3147,12 @@ export default function Home() {
         ctx.fill();
       }
       if (type === "fire") {
+        const fireAmmoIcon = images.current.fireAmmoCounter?.[0];
+        if (fireAmmoIcon?.complete && fireAmmoIcon.naturalWidth) {
+          ctx.drawImage(fireAmmoIcon, -26, -26, 52, 52);
+          ctx.restore();
+          return;
+        }
         ctx.fillStyle = "#ffef6e";
         ctx.beginPath();
         ctx.arc(0, 0, 12, 0, Math.PI * 2);
@@ -3322,14 +3436,29 @@ export default function Home() {
         });
 
       if (hasLevelBackgroundLayers) {
-        levelBackgroundLayers.forEach((layer) => {
+        levelBackgroundLayers.forEach((layer, layerIndex) => {
           const image = levelBackgroundImages.current[layer.src];
           if (!image) return;
           const scale = HEIGHT / image.naturalHeight;
           const drawW = Math.max(WIDTH, image.naturalWidth * scale);
           const offset = -((camera.current * layer.speed) % drawW);
-          ctx.drawImage(image, Math.round(offset), 0, drawW, HEIGHT);
-          if (offset + drawW < WIDTH) ctx.drawImage(image, Math.round(offset + drawW), 0, drawW, HEIGHT);
+          const drawLayer = () => {
+            ctx.drawImage(image, Math.round(offset), 0, drawW, HEIGHT);
+            if (offset + drawW < WIDTH) ctx.drawImage(image, Math.round(offset + drawW), 0, drawW, HEIGHT);
+          };
+          if (map.id === "1 Final" && layerIndex === levelBackgroundLayers.length - 1) {
+            const pitStart = Math.max(0, Math.min(WIDTH, FINAL_FOREST_FALL_PIT.x - camera.current));
+            const pitEnd = Math.max(0, Math.min(WIDTH, FINAL_FOREST_FALL_PIT.x + FINAL_FOREST_FALL_PIT.w - camera.current));
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(0, 0, pitStart, HEIGHT);
+            ctx.rect(pitEnd, 0, WIDTH - pitEnd, HEIGHT);
+            ctx.clip();
+            drawLayer();
+            ctx.restore();
+          } else {
+            drawLayer();
+          }
         });
       } else if (hasLevelBackground && levelBackground) {
         const scale = HEIGHT / levelBackground.naturalHeight;
@@ -3532,6 +3661,8 @@ export default function Home() {
         if (powerUp.taken) return;
         const x = powerUp.x + powerUp.w / 2 - camera.current;
         const y = powerUp.y + powerUp.h / 2 + Math.sin(frame * 0.3) * 4;
+        const drewPowerUp = drawSprite("firePowerUp", frame, powerUp.x + powerUp.w / 2 - 26, y - 26, 52, 52, 1);
+        if (drewPowerUp) return;
         ctx.fillStyle = "#ffef6e";
         ctx.beginPath();
         ctx.arc(x, y, 18, 0, Math.PI * 2);
@@ -3555,6 +3686,7 @@ export default function Home() {
         ctx.fill();
       });
       projectiles.current.forEach((shot) => {
+        if (drawSprite("playerFireProjectile", frame, shot.x, shot.y, 18, 18, shot.vx >= 0 ? 1 : -1)) return;
         const x = shot.x - camera.current;
         ctx.fillStyle = "#ffef6e";
         ctx.beginPath();
@@ -3564,23 +3696,11 @@ export default function Home() {
         ctx.fillRect(x - (shot.vx > 0 ? 18 : -shot.w), shot.y + 4, 18, 4);
       });
       bossProjectiles.current.forEach((shot) => {
+        if (shot.kind === "fire") return;
         const x = shot.x - camera.current;
         if (shot.kind === "wave") {
           ctx.fillStyle = "rgba(160,237,255,.65)";
           ctx.fillRect(x, shot.y, shot.w, shot.h);
-          return;
-        }
-        if (shot.kind === "fire") {
-          const flame = ctx.createRadialGradient(x + shot.w * 0.38, shot.y + shot.h * 0.42, 2, x + shot.w / 2, shot.y + shot.h / 2, shot.w * 0.78);
-          flame.addColorStop(0, "#fff1a6");
-          flame.addColorStop(0.42, "#ff9f2e");
-          flame.addColorStop(1, "rgba(221,48,22,.35)");
-          ctx.fillStyle = flame;
-          ctx.beginPath();
-          ctx.ellipse(x + shot.w / 2, shot.y + shot.h / 2, shot.w * 0.62, shot.h * 0.52, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = "rgba(255,70,20,.45)";
-          ctx.fillRect(shot.vx >= 0 ? x - 16 : x + shot.w - 2, shot.y + shot.h / 2 - 3, 18, 6);
           return;
         }
         ctx.fillStyle = "#b6f3ff";
@@ -3634,6 +3754,20 @@ export default function Home() {
 
       if (!map.finalCastle) drawForestExit(map.goal, map.id);
       if (boss.current) drawBoss(boss.current, frame, p.x);
+      bossProjectiles.current.forEach((shot) => {
+        if (shot.kind !== "fire") return;
+        const x = shot.x - camera.current;
+        const flame = ctx.createRadialGradient(x + shot.w * 0.38, shot.y + shot.h * 0.42, 2, x + shot.w / 2, shot.y + shot.h / 2, shot.w * 0.78);
+        flame.addColorStop(0, "#fff1a6");
+        flame.addColorStop(0.42, "#ff9f2e");
+        flame.addColorStop(1, "rgba(221,48,22,.35)");
+        ctx.fillStyle = flame;
+        ctx.beginPath();
+        ctx.ellipse(x + shot.w / 2, shot.y + shot.h / 2, shot.w * 0.62, shot.h * 0.52, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,70,20,.45)";
+        ctx.fillRect(shot.vx >= 0 ? x - 16 : x + shot.w - 2, shot.y + shot.h / 2 - 3, 18, 6);
+      });
 
       const playerAnim: AnimName =
         p.dead > 0 || gameOver
@@ -3660,6 +3794,7 @@ export default function Home() {
       const meleeRight = playerAnim === "kick" && p.face > 0;
       const meleeLeft = playerAnim === "kick" && p.face < 0;
       const sitting = keys.current.sit && p.grounded && p.attack <= 0 && p.dead <= 0 && !gameOver;
+      const firing = keys.current.fire && p.attack <= 0 && p.dead <= 0 && p.hurt <= 0 && !gameOver;
       const meleeLeftNeutral =
         playerAnim === "idle" &&
         p.face < 0 &&
@@ -3678,7 +3813,7 @@ export default function Home() {
         !keys.current.right &&
         !keys.current.fire &&
         !sitting;
-      const visualKey = `${meleeRightNeutral ? "meleeRightNeutral" : meleeLeftNeutral ? "meleeLeftNeutral" : jumpRight ? "jumpRight" : jumpLeft ? "jumpLeft" : landRight ? "landRight" : landLeft ? "landLeft" : playerAnim}:${p.face > 0 ? "right" : "left"}:${sitting ? "sit" : "stand"}`;
+      const visualKey = `${firing ? "fire" : sitting ? "sit" : meleeRightNeutral ? "meleeRightNeutral" : meleeLeftNeutral ? "meleeLeftNeutral" : jumpRight ? "jumpRight" : jumpLeft ? "jumpLeft" : landRight ? "landRight" : landLeft ? "landLeft" : playerAnim}:${p.face > 0 ? "right" : "left"}`;
       if (playerVisualKey.current !== visualKey) {
         playerVisualKey.current = visualKey;
         playerVisualStartFrame.current = frame;
@@ -3689,12 +3824,20 @@ export default function Home() {
       const meleeFrame = meleeFrameChoice.current % 2;
       const drawCenteredPlayerSprite = (anim: AnimName, spriteFrame: number, sourceWidth: number, visibleCenterX: number) => {
         const drawW = 186;
-        const drawH = sitting ? 78 : 104;
+        const drawH = 104;
         const playerCenterX = p.x + p.w / 2;
         const drawX = playerCenterX - (visibleCenterX / sourceWidth) * drawW;
         return drawSprite(anim, spriteFrame, drawX, p.y + p.h - drawH, drawW, drawH, 1);
       };
-      const playerDrawn = jumpRight
+      const playerDrawn = firing
+        ? p.face > 0
+          ? drawCenteredPlayerSprite("fireRight", 0, 1440, 744)
+          : drawCenteredPlayerSprite("fireLeft", 0, 1440, 701)
+        : sitting
+          ? p.face > 0
+            ? drawCenteredPlayerSprite("sitRight", 0, 1440, 733)
+            : drawCenteredPlayerSprite("sitLeft", 0, 1440, 705)
+        : jumpRight
         ? drawCenteredPlayerSprite("jumpRight", jumpRightFrame, 1440, 721)
         : jumpLeft
         ? drawCenteredPlayerSprite("jumpLeft", jumpLeftFrame, 1440, 690.5)
@@ -3747,7 +3890,7 @@ export default function Home() {
       ctx.fillText(`${hud.coins}`, 49, 36);
       ctx.fillText(`${hud.lives}`, 181, 36);
       ctx.font = "700 18px Arial";
-      ctx.fillText(`${p.fire}`, 314, 35);
+      ctx.fillText(`${p.fire}`, 324, 35);
       ctx.fillText(soundOn ? "Music" : "Muted", 390, 35);
       ctx.fillStyle = "rgba(255,255,255,.22)";
       ctx.fillRect(465, 18, 118, 18);
@@ -3860,7 +4003,7 @@ export default function Home() {
             x: p.x + (p.face > 0 ? p.w : -22),
             y: fireY,
             w: 18,
-            h: 10,
+            h: 18,
             vx: p.face * 9,
             life: 70,
           });
@@ -4112,8 +4255,7 @@ export default function Home() {
             };
             bossState.vulnerable = Math.max(0, bossState.vulnerable - 1);
             bossState.slam = Math.max(0, bossState.slam - 1);
-            bossState.meleeWindup = 0;
-            bossState.meleeCooldown = 0;
+            bossState.meleeCooldown = Math.max(0, bossState.meleeCooldown - 1);
             bossState.hurt = Math.max(0, bossState.hurt - 1);
             const useSimpleForestBossActions = true;
             if (useSimpleForestBossActions) {
@@ -4223,6 +4365,8 @@ export default function Home() {
                     bossState.phase = "breathing";
                     bossState.attackTimer = 90;
                     bossState.breathShots = 10;
+                    bossState.breathStage = "idle";
+                    bossState.breathAnimFrame = 0;
                     bossState.intro = 45;
                     setHud((value) => ({ ...value, message: "Root Guardian turns and breathes fire!" }));
                   }
@@ -4239,6 +4383,8 @@ export default function Home() {
                   bossState.phase = "breathing";
                   bossState.attackTimer = 30;
                   bossState.breathShots = 10;
+                  bossState.breathStage = "idle";
+                  bossState.breathAnimFrame = 0;
                   bossState.intro = 0;
                   setHud((value) => ({ ...value, message: bossState.face > 0 ? "Root Guardian turns left and targets Alex." : "Root Guardian turns right and targets Alex." }));
                 }
@@ -4255,19 +4401,12 @@ export default function Home() {
                 bossState.vy = 0;
                 const playerNearDragon = Math.abs(p.x + p.w / 2 - (bossState.x + bossState.w / 2)) < 190 && Math.abs(p.y + p.h - (bossState.y + bossState.h)) < 95;
                 const playerInFrontOfDragon = bossState.face > 0 ? playerCenter < bossState.x + bossState.w / 2 : playerCenter > bossState.x + bossState.w / 2;
-                if (playerNearDragon && p.hurt <= 0) {
-                  damagePlayer(18, bossState.x + bossState.w / 2);
-                  setHud((value) => ({ ...value, message: "Too close to the dragon!" }));
-                }
-                if (playerNearDragon || !playerInFrontOfDragon) {
-                  bossState.attackTimer = Math.max(bossState.attackTimer, 30);
-                } else if (bossState.attackTimer <= 0 && bossState.breathShots > 0) {
+                const launchFireball = () => {
                   const face = bossState.face >= 0 ? 1 : -1;
                   const visualLeft = bossState.x + FOREST_BOSS_DRAW_X_OFFSET;
-                  const visualRight = bossState.x + FOREST_BOSS_DRAW_X_OFFSET + FOREST_BOSS_DRAW_W;
                   const visualTop = bossState.y + FOREST_BOSS_DRAW_Y_OFFSET;
-                  const mouthX = face > 0 ? visualRight - 120 : visualLeft + 92;
-                  const mouthY = visualTop + 275;
+                  const mouthX = face > 0 ? visualLeft + 75 : visualLeft + 382;
+                  const mouthY = visualTop + (face > 0 ? 369 : 364);
                   const targetX = p.x + p.w / 2;
                   const targetY = p.y + 8;
                   const dx = targetX - mouthX;
@@ -4275,8 +4414,8 @@ export default function Home() {
                   const distance = Math.max(1, Math.hypot(dx, dy));
                   const speed = 8.4;
                   bossProjectiles.current.push({
-                    x: mouthX,
-                    y: mouthY,
+                    x: mouthX - 14,
+                    y: mouthY - 14,
                     w: 28,
                     h: 28,
                     vx: (dx / distance) * speed,
@@ -4285,9 +4424,65 @@ export default function Home() {
                     kind: "fire",
                   });
                   bossState.breathShots -= 1;
-                  bossState.attackTimer = 90;
                   beep(150, 0.07, "sawtooth", 0.08, -42);
-                } else if (bossState.breathShots <= 0 && bossState.attackTimer <= 0) {
+                };
+                if (playerNearDragon) {
+                  bossState.phase = "clawing";
+                  bossState.meleeStyle = Math.random() < 0.5 ? 1 : 2;
+                  bossState.meleeSide = playerInFrontOfDragon ? "front" : "back";
+                  bossState.meleeWindup = 62;
+                  bossState.vx = 0;
+                  bossState.vy = 0;
+                  setHud((value) => ({ ...value, message: playerInFrontOfDragon ? "Root Guardian attacks in front!" : "Root Guardian attacks behind!" }));
+                } else if (!playerInFrontOfDragon) {
+                  bossState.phase = "laughing";
+                  bossState.vx = 0;
+                  bossState.vy = 0;
+                  setHud((value) => ({ ...value, message: "Root Guardian laughs at anyone standing behind it." }));
+                } else if (bossState.breathShots > 0 && playerNearDragon) {
+                  bossState.attackTimer = 0;
+                } else if (bossState.breathStage === "idle") {
+                  bossState.breathAnimFrame += 1;
+                  if (bossState.breathAnimFrame >= ROOT_GUARDIAN_SPRITES.idleDragonLeft.length * FOREST_IDLE_FRAME_TICKS) {
+                    bossState.breathStage = "ready";
+                    bossState.breathAnimFrame = 0;
+                  }
+                } else if (bossState.breathStage === "ready") {
+                  bossState.breathAnimFrame += 1;
+                  if (bossState.breathAnimFrame >= ROOT_GUARDIAN_SPRITES.fireReadyLeft.length * FOREST_FIRE_READY_FRAME_TICKS) {
+                    bossState.breathStage = "cycle";
+                    bossState.breathAnimFrame = 0;
+                  }
+                } else if (bossState.breathStage === "cycle") {
+                  if (bossState.breathAnimFrame === 0) {
+                    launchFireball();
+                    if (bossState.breathShots === 1) {
+                      bossState.breathStage = "done";
+                      bossState.breathAnimFrame = 0;
+                    } else {
+                      bossState.breathAnimFrame = 1;
+                    }
+                  } else {
+                    const cycleTicks = ROOT_GUARDIAN_SPRITES.fireCycleLeft.length * FOREST_FIRE_CYCLE_FRAME_TICKS;
+                    bossState.breathAnimFrame = (bossState.breathAnimFrame + 1) % cycleTicks;
+                  }
+                } else if (bossState.breathStage === "done" && bossState.breathShots > 0) {
+                  if (bossState.breathAnimFrame === 0) launchFireball();
+                  bossState.breathAnimFrame += 1;
+                } else if (bossState.breathStage === "done" && bossState.breathAnimFrame < ROOT_GUARDIAN_SPRITES.fireDoneLeft.length * FOREST_FIRE_DONE_FRAME_TICKS) {
+                  bossState.breathAnimFrame += 1;
+                } else if (bossState.breathStage === "postIdle") {
+                  bossState.breathAnimFrame += 1;
+                  if (bossState.breathAnimFrame >= ROOT_GUARDIAN_SPRITES.idleDragonLeft.length * FOREST_IDLE_FRAME_TICKS) {
+                    const bossOnRightSide = bossState.x > (visualSafeBossLeft + visualSafeBossRight) / 2;
+                    bossState.phase = bossOnRightSide ? "rising" : "risingRight";
+                    bossState.targetX = bossState.x;
+                    bossState.targetY = FOREST_BOSS_FLY_Y;
+                    bossState.vy = 0;
+                    bossState.attackTimer = 80;
+                    setHud((value) => ({ ...value, message: bossOnRightSide ? "Root Guardian rises to fly left again." : "Root Guardian rises to fly right again." }));
+                  }
+                } else if (bossState.breathStage === "done" && bossState.breathShots <= 0) {
                   const bossAirPlatforms = map.platforms.filter((platform) => platform.bossIgnore);
                   const topAirY = bossAirPlatforms.reduce((top, platform) => Math.min(top, platform.y), Number.POSITIVE_INFINITY);
                   const topAirPlatforms = bossAirPlatforms.filter((platform) => Math.abs(platform.y - topAirY) < 4);
@@ -4302,13 +4497,48 @@ export default function Home() {
                       kind: "fire",
                     });
                   }
-                  const bossOnRightSide = bossState.x > (visualSafeBossLeft + visualSafeBossRight) / 2;
-                  bossState.phase = bossOnRightSide ? "rising" : "risingRight";
-                  bossState.targetX = bossState.x;
-                  bossState.targetY = FOREST_BOSS_FLY_Y;
-                  bossState.vy = 0;
-                  bossState.attackTimer = 80;
-                  setHud((value) => ({ ...value, message: bossOnRightSide ? "Root Guardian rises to fly left again." : "Root Guardian rises to fly right again." }));
+                  bossState.breathStage = "postIdle";
+                  bossState.breathAnimFrame = 0;
+                }
+              } else if (bossState.phase === "laughing") {
+                bossState.vx = 0;
+                bossState.vy = 0;
+                const laughPlayerCenter = p.x + p.w / 2;
+                const laughPlayerNear = Math.abs(laughPlayerCenter - (bossState.x + bossState.w / 2)) < 190 && Math.abs(p.y + p.h - (bossState.y + bossState.h)) < 95;
+                const laughPlayerInFront = bossState.face > 0 ? laughPlayerCenter < bossState.x + bossState.w / 2 : laughPlayerCenter > bossState.x + bossState.w / 2;
+                if (laughPlayerNear) {
+                  bossState.phase = "clawing";
+                  bossState.meleeSide = laughPlayerInFront ? "front" : "back";
+                  bossState.meleeStyle = Math.random() < 0.5 ? 1 : 2;
+                  bossState.meleeWindup = 62;
+                } else if (laughPlayerInFront) {
+                  bossState.phase = "breathing";
+                }
+              } else if (bossState.phase === "clawing") {
+                bossState.vx = 0;
+                bossState.vy = 0;
+                const meleePlayerCenter = p.x + p.w / 2;
+                const meleePlayerNear = Math.abs(meleePlayerCenter - (bossState.x + bossState.w / 2)) < 190 && Math.abs(p.y + p.h - (bossState.y + bossState.h)) < 95;
+                const meleePlayerInFront = bossState.face > 0 ? meleePlayerCenter < bossState.x + bossState.w / 2 : meleePlayerCenter > bossState.x + bossState.w / 2;
+                const nextMeleeSide = meleePlayerInFront ? "front" : "back";
+                if (!meleePlayerNear) {
+                  bossState.phase = "breathing";
+                  bossState.meleeWindup = 0;
+                  bossState.meleeCooldown = 12;
+                } else if (nextMeleeSide !== bossState.meleeSide) {
+                  bossState.meleeSide = nextMeleeSide;
+                  bossState.meleeStyle = Math.random() < 0.5 ? 1 : 2;
+                  bossState.meleeWindup = 62;
+                } else {
+                  bossState.meleeWindup = Math.max(0, bossState.meleeWindup - 1);
+                  if (bossState.meleeWindup === 31 && p.hurt <= 0) {
+                    damagePlayer(18, bossState.x + bossState.w / 2);
+                    beep(118, 0.08, "sawtooth", 0.1, -30);
+                  }
+                  if (bossState.meleeWindup <= 0) {
+                    bossState.meleeStyle = Math.random() < 0.5 ? 1 : 2;
+                    bossState.meleeWindup = 62;
+                  }
                 }
               } else if (bossState.phase === "vulnerable") {
                 const groundPlatform = currentBossPlatform ?? defaultBossPlatform;
@@ -4696,7 +4926,6 @@ export default function Home() {
             playSound("hit");
             setHud((value) => ({ ...value, message: `${bossState.biome === "forest" ? "Weak core hit" : bossState.biome === "ice" ? "Ice armor fractured" : "Armor cracked"} ${Math.max(0, bossState.health)}/${bossState.maxHealth}` }));
             if (bossState.health <= 0) {
-              bossState.face = bossFacing(bossState, p.x + p.w / 2);
               bossState.alive = false;
               bossState.defeated = true;
               bossState.phase = "defeated";
@@ -4727,7 +4956,7 @@ export default function Home() {
           if (bossState.biome !== "forest" && overlaps(p, bossState) && bossState.hurt <= 0 && !bossWasHit && !forestClawActive) damagePlayer(20, bossState.x + bossState.w / 2);
         }
         if (bossState?.active && bossState.phase === "defeated") {
-          const forestDeathFrames = bossState.face > 0 ? ROOT_GUARDIAN_SPRITES.deadRight : ROOT_GUARDIAN_SPRITES.deadLeft;
+          const forestDeathFrames = bossState.face >= 0 ? ROOT_GUARDIAN_SPRITES.deadLeft : ROOT_GUARDIAN_SPRITES.deadRight;
           const maxDeathFrame = bossState.biome === "forest" ? forestDeathFrames.length - 1 : FROST_WARDEN_SPRITES.dead.length - 1;
           if (bossState.deathFrame < maxDeathFrame) {
             const frameAdvance = bossState.biome === "forest" ? 0.32 : 0.26;
