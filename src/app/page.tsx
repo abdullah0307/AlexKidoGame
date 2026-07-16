@@ -1,17 +1,17 @@
-"use client";
+﻿"use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useCoreLoop } from "@/game/core/use-core-loop";
 
 type ButtonKey = "left" | "right" | "jump" | "kick" | "fire" | "sit";
 type Entity = { x: number; y: number; w: number; h: number; bossIgnore?: boolean };
 type Coin = Entity & { taken?: boolean; pulse?: number };
-type PowerUp = Entity & { taken?: boolean; kind: "fire" };
+type PowerUp = Entity & { taken?: boolean; kind: "fire"; amount?: number };
 type LifePoint = Entity & { taken?: boolean; pulse?: number };
 type BossDiamond = Entity & { active: boolean; taken?: boolean; pulse: number };
 type Hazard = Entity;
 type Projectile = Entity & { vx: number; life: number };
-type BossProjectile = Entity & { vx: number; vy: number; life: number; kind: "shard" | "wave" | "fire" };
+type BossProjectile = Entity & { vx: number; vy: number; life: number; kind: "shard" | "wave" | "fire"; fireDirection?: "left" | "right" };
 type BossPillar = Entity & { life: number };
 type MovingLift = Entity & { minX: number; maxX: number; speed: number; dir: 1 | -1 };
 type Checkpoint = Entity & { active?: boolean };
@@ -106,7 +106,7 @@ type Player = Entity & {
 };
 type AudioWindow = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
 type GameScreen = "menu" | "loading" | "playing";
-type MenuScreen = "main" | "levels";
+type MenuScreen = "main" | "levels" | "options";
 type LoadingInfo = {
   level: string;
   world: string;
@@ -117,6 +117,7 @@ type LoadingInfo = {
   fire: number;
   power: number;
 };
+type CanvasIntroPhase = "logo" | "touch" | "main";
 type SoundName = "jump" | "kick" | "hit" | "coin" | "hurt" | "win" | "laser" | "powerup" | "checkpoint" | "blood" | "lose";
 type Biome = "forest" | "ice" | "volcano" | "desert" | "haunted" | "clockwork" | "ocean" | "storm" | "void" | "shadow";
 type AnimName =
@@ -146,6 +147,12 @@ type AnimName =
   | "fall"
   | "hurt"
   | "dead"
+  | "alexHurtRight"
+  | "alexHurtLeft"
+  | "alexDeadRight"
+  | "alexDeadLeft"
+  | "alexPitFallRight"
+  | "alexPitFallLeft"
   | "slimeIdle"
   | "slimeMove"
   | "slimeAttack"
@@ -156,7 +163,25 @@ type AnimName =
   | "forestBee1Right"
   | "forestBee1Left"
   | "forestBee2Right"
-  | "forestBee2Left";
+  | "forestBee2Left"
+  | "iceBlock1Right"
+  | "iceBlock1Left"
+  | "iceBlock2Right"
+  | "iceBlock2Left"
+  | "iceOwlRight"
+  | "iceOwlLeft"
+  | "volcanoMagmaRight"
+  | "volcanoMagmaLeft"
+  | "volcanoDinoRight"
+  | "volcanoDinoLeft"
+  | "desertPlantRight"
+  | "desertPlantLeft"
+  | "desertVulcurRight"
+  | "desertVulcurLeft"
+  | "hauntedPumpkinRight"
+  | "hauntedPumpkinLeft"
+  | "hauntedGhostRight"
+  | "hauntedGhostLeft";
 type BossAnimName =
   | "idle"
   | "run"
@@ -241,6 +266,64 @@ const HEIGHT = 540;
 const GRAVITY = 0.75;
 const LEVEL_END = 5200;
 const MAX_POWER = 100;
+const IMPORTED_CANVAS_ROOT = "/assets/imported/Canvas";
+const CANVAS_LOGO_SRC = `${IMPORTED_CANVAS_ROOT}/logo/tad%20logo.png?v=20260710`;
+const CANVAS_TOUCH_SRC = `${IMPORTED_CANVAS_ROOT}/touch/test.png?v=20260710`;
+const CANVAS_MAIN_SRC = `${IMPORTED_CANVAS_ROOT}/main/test.png?v=20260710`;
+const CANVAS_BUTTONS = {
+  musicOn: `${IMPORTED_CANVAS_ROOT}/music%20on/music%20on.png?v=20260710`,
+  musicOff: `${IMPORTED_CANVAS_ROOT}/music%20off/Music%20off.png?v=20260710`,
+  restart: `${IMPORTED_CANVAS_ROOT}/restart/restart.png?v=20260710`,
+  exit: `${IMPORTED_CANVAS_ROOT}/exit/exit.png?v=20260710`,
+};
+const CANVAS_HURT_HUD_FRAMES = [1, 2, 3, 4].map((index) => `${IMPORTED_CANVAS_ROOT}/hurt/${index}.png?v=20260710`);
+const CANVAS_HURT_HUD_CROP = { x: 298, y: 20, w: 683, h: 678 };
+const ALEX_HEALTH_BORDER_SRC = "/assets/imported/Health/border.png?v=20260710";
+const ALEX_HEALTH_FILL_SRC = "/assets/imported/Health/health.png?v=20260710";
+const ALEX_HEALTH_BORDER_CROP = { x: 78, y: 296, w: 1125, h: 128 };
+const ALEX_HEALTH_FILL_CROP = { x: 192, y: 323, w: 900, h: 70 };
+const DRAGON_HUD_FULL_SRC = `${IMPORTED_CANVAS_ROOT}/dragon/full.png?v=20260716`;
+const DRAGON_HUD_DEAD_SRC = `${IMPORTED_CANVAS_ROOT}/dragon/dead.png?v=20260716`;
+const BOSS_HEALTH_COVER_SRC = `${IMPORTED_CANVAS_ROOT}/Boss%20Helth/cover.png?v=20260716`;
+const BOSS_HEALTH_FILL_SRC = `${IMPORTED_CANVAS_ROOT}/Boss%20Helth/dragon.png?v=20260716`;
+const BOSS_HEALTH_COVER_CROP = { x: 63, y: 310, w: 1176, h: 124 };
+const BOSS_HEALTH_FILL_CROP = BOSS_HEALTH_COVER_CROP;
+const IMPORTED_COINS_ROOT = "/assets/imported/Coins";
+const WORLD_FIRE_ASSETS: Partial<Record<Biome, { folder: string; canvas: string; gameplayStart: number; gameplayCount: number; playerStart: number; playerCount: number }>> = {
+  ice: { folder: "Ice Fortress", canvas: "Canvas/coin 2_3.png", gameplayStart: 1, gameplayCount: 52, playerStart: 0, playerCount: 10 },
+  volcano: { folder: "Volcano Ruins", canvas: "Canvas/coin 2_2.png", gameplayStart: 0, gameplayCount: 58, playerStart: 0, playerCount: 22 },
+  desert: { folder: "Desert Sky Temple", canvas: "Canvas/coin 2_1.png", gameplayStart: 0, gameplayCount: 53, playerStart: 0, playerCount: 6 },
+  haunted: { folder: "Haunted Moonwood", canvas: "Canvas/coin 2_4.png", gameplayStart: 0, gameplayCount: 55, playerStart: 0, playerCount: 5 },
+};
+const importedFirePath = (folder: string, part: "Gameplay" | "player", index: number) =>
+  `${IMPORTED_COINS_ROOT}/${encodeURI(folder)}/${part}/coin%202_${index}.png?v=20260710`;
+const worldFireSources = (biome: Biome) => {
+  const assets = WORLD_FIRE_ASSETS[biome];
+  if (!assets) return [];
+  return [
+    `${IMPORTED_COINS_ROOT}/${encodeURI(assets.folder)}/${encodeURI(assets.canvas)}?v=20260710`,
+    ...Array.from({ length: assets.gameplayCount }, (_, index) => importedFirePath(assets.folder, "Gameplay", assets.gameplayStart + index)),
+    ...Array.from({ length: assets.playerCount }, (_, index) => importedFirePath(assets.folder, "player", assets.playerStart + index)),
+  ];
+};
+const IMPORTED_PORTAL_ROOT = "/assets/imported/PORTALS";
+const NEXT_WORLD_PORTAL_FOLDER: Partial<Record<Biome, string>> = {
+  forest: "Ice Fortress",
+  ice: "Volcano ruins",
+  volcano: "Desert Sky Temple",
+  desert: "Haunted Moonwood",
+};
+const nextWorldPortalSources = (biome: Biome) => {
+  const folder = NEXT_WORLD_PORTAL_FOLDER[biome];
+  if (!folder) return [];
+  const encoded = encodeURI(folder);
+  return [
+    `${IMPORTED_PORTAL_ROOT}/${encoded}/left.png?v=20260710`,
+    `${IMPORTED_PORTAL_ROOT}/${encoded}/left%20overlay.png?v=20260710`,
+    `${IMPORTED_PORTAL_ROOT}/${encoded}/right.png?v=20260710`,
+    `${IMPORTED_PORTAL_ROOT}/${encoded}/right%20overlay.png?v=20260710`,
+  ];
+};
 const ENEMY_DAMAGE = 25;
 const WALK_SPEED = 4.4;
 const RUN_JUMP_SPEED = 7.2;
@@ -251,6 +334,11 @@ const FOREST_BOSS_DRAW_H = 520;
 const FOREST_BOSS_DRAW_X_OFFSET = -173;
 const FOREST_BOSS_DRAW_Y_OFFSET = -362;
 const FOREST_BOSS_FLY_Y = 73;
+const PLAYER_FIRE_SIZE = 30;
+// Visual muzzle point on the firing PNG (the shield/hand point marked in the reference image).
+// Projectiles are drawn before the player, so their first frame begins behind the PNG and emerges outward.
+const PLAYER_FIRE_MUZZLE_X = 51;
+const PLAYER_FIRE_MUZZLE_Y = 4;
 const FOREST_IDLE_FRAME_TICKS = 2;
 const FOREST_FIRE_READY_FRAME_TICKS = 3;
 const FOREST_FIRE_CYCLE_FRAME_TICKS = 7;
@@ -258,7 +346,7 @@ const FOREST_FIRE_DONE_FRAME_TICKS = 2;
 const BOSS_ARENA_LEFT = 4300;
 const FOREST_BOSS_CAMERA_X = BOSS_ARENA_LEFT - 120;
 const BOSS_ARENA_RIGHT = LEVEL_END - 18;
-const FINAL_FOREST_FALL_PIT = { x: 4580, w: 300 };
+const FINAL_FOREST_FALL_PIT = { x: 0, w: BOSS_ARENA_LEFT - 160 };
 const FOREST_BOSS_PATROL_MIN = BOSS_ARENA_LEFT;
 const FOREST_BOSS_PATROL_MAX = BOSS_ARENA_RIGHT;
 const FOREST_BOSS_WALK_SPEED = 1.55;
@@ -278,8 +366,8 @@ const makeBoss = (biome: Biome): Boss => ({
   alive: true,
   defeated: false,
   phase: "idle",
-  health: biome === "forest" ? 30 : biome === "ice" ? 8 : 5,
-  maxHealth: biome === "forest" ? 30 : biome === "ice" ? 8 : 5,
+  health: biome === "forest" ? 30 : biome === "ice" ? 8 : biome === "volcano" ? 18 : 5,
+  maxHealth: biome === "forest" ? 30 : biome === "ice" ? 8 : biome === "volcano" ? 18 : 5,
   attackTimer: 110,
   vulnerable: 0,
   slam: 0,
@@ -325,6 +413,10 @@ const fireLeftFrames = ["/assets/sprites/player/fire/left/player-fire-left-00.pn
 const firePowerUpFrames = Array.from({ length: 32 }, (_, index) => `/assets/sprites/pickups/fire-power-up/fire-power-up-${index.toString().padStart(2, "0")}.png?v=20260618-0640`);
 const fireAmmoCounterFrames = ["/assets/sprites/hud/fire-ammo-counter.png?v=20260618-current"];
 const playerFireProjectileFrames = Array.from({ length: 5 }, (_, index) => `/assets/sprites/projectiles/player-fire/player-fire-${index.toString().padStart(2, "0")}.png?v=20260619-0149`);
+const importedAlexPresentFrames = (folder: "HURT" | "dead" | "fall", direction: "left" | "right", start: number, count: number) =>
+  Array.from({ length: count }, (_, index) =>
+    `/assets/imported/Alex/${folder}/${direction}/ALEX%20Present_${start + index}.png?v=20260712-recovery`,
+  );
 const runRightFrames = Array.from({ length: 13 }, (_, index) => `/assets/sprites/player/run-right/run-right-${pad2(index)}.png`);
 const runLeftFrames = Array.from({ length: 13 }, (_, index) => `/assets/sprites/player/run-left/run-left-${pad2(index)}.png`);
 const jumpRightFrames = Array.from({ length: 2 }, (_, index) => `/assets/sprites/player/jump-right/jump-right-${pad2(index)}.png`);
@@ -341,6 +433,10 @@ const forestSlimeRightFrames = Array.from({ length: 53 }, (_, index) => `/assets
 const forestSlimeLeftFrames = Array.from({ length: 53 }, (_, index) => `/assets/sprites/enemies/forest-slime/left/slime-${pad2(index)}.png`);
 const forestBeeFrames = (variant: 1 | 2, direction: "left" | "right") =>
   Array.from({ length: 62 }, (_, index) => `/assets/sprites/enemies/forest-bee/${variant}/${direction}/bee-${pad2(index)}.png`);
+const importedEnemyFrames = (folder: string, name: string, direction: "left" | "right", prefix: string, count: number) =>
+  Array.from({ length: count }, (_, index) => `/assets/imported/Enemy/${folder}/${name}/${direction}/${prefix}_${index}.png?v=20260710`);
+const importedIceBlockFrames = (style: 1 | 2, direction: "left" | "right") =>
+  Array.from({ length: style === 1 ? 62 : 43 }, (_, index) => `/assets/imported/Enemy/Ice Fortress/Ice Block/${style}/${direction}/slime_${index}.png?v=20260710`);
 const rootGuardianHighResFrames = (animation: string, count: number) =>
   Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/highres/${animation}/root-guardian-${animation}-${index.toString().padStart(3, "0")}.png`);
 const rootGuardianFlyLeftFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/fly-left/root-guardian-fly-left-${index.toString().padStart(3, "0")}.png`);
@@ -355,15 +451,55 @@ const rootGuardianFireCycleLeftFrames = rootGuardianFireFrames("cycle", "left", 
 const rootGuardianFireCycleRightFrames = rootGuardianFireFrames("cycle", "right", 12);
 const rootGuardianFireDoneLeftFrames = rootGuardianFireFrames("done", "left", 41);
 const rootGuardianFireDoneRightFrames = rootGuardianFireFrames("done", "right", 41);
+const importedDragonFireFrames = (direction: "left" | "right") =>
+  Array.from({ length: 16 }, (_, index) => `/assets/imported/BOSS/1_DRAGON/fire/${direction}/Fireball_${index}.png?v=20260716b`);
 const rootGuardianDeadRightFrames = Array.from({ length: 112 }, (_, index) => `/assets/sprites/bosses/root-guardian/dead/right/root-guardian-dead-right-${index.toString().padStart(3, "0")}.png?v=20260618-current`);
 const rootGuardianDeadLeftFrames = Array.from({ length: 112 }, (_, index) => `/assets/sprites/bosses/root-guardian/dead/left/root-guardian-dead-left-${index.toString().padStart(3, "0")}.png?v=20260618-current`);
-const rootGuardianLaughRightFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/laugh/right/root-guardian-laugh-right-${index.toString().padStart(3, "0")}.png?v=20260618-0536`);
-const rootGuardianLaughLeftFrames = Array.from({ length: 62 }, (_, index) => `/assets/sprites/bosses/root-guardian/laugh/left/root-guardian-laugh-left-${index.toString().padStart(3, "0")}.png?v=20260618-0536`);
+const rootGuardianLaughRightFrames = Array.from(
+  { length: 57 },
+  (_, index) => `/assets/imported/BOSS/1_DRAGON/make%20lugh/right/Dragon%20final%201_${index + 4}.png?v=20260716`,
+);
+const rootGuardianLaughLeftFrames = Array.from(
+  { length: 57 },
+  (_, index) => `/assets/imported/BOSS/1_DRAGON/make%20lugh/left/Dragon%20final%201_${index + 4}.png?v=20260716`,
+);
 const rootGuardianMeleeFrontFrames = (style: 1 | 2, direction: "left" | "right", count: number) =>
   Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/melee-front/${style}/${direction}/root-guardian-melee-front-${style}-${direction}-${index.toString().padStart(3, "0")}.png?v=20260618-current`);
 const rootGuardianMeleeBackFrames = (style: 1 | 2, direction: "left" | "right", count: number) =>
   Array.from({ length: count }, (_, index) => `/assets/sprites/bosses/root-guardian/melee-back/${style}/${direction}/root-guardian-melee-back-${style}-${direction}-${index.toString().padStart(3, "0")}.png?v=20260618-current`);
 const rootGuardianSingleDragonFrame = ["/assets/sprites/bosses/root-guardian/single/root-guardian-dragon.png"];
+const importedIceGuardianFrames = (folder: string, direction: "left" | "right", count: number) =>
+  Array.from({ length: count }, (_, index) =>
+    `/assets/imported/BOSS/2_Ice%20Guardian/${encodeURI(folder)}/${direction}/ice%20guardian_${index}.png?v=20260712-recovery`,
+  );
+const IMPORTED_BOSS_ROOT = "/assets/imported/BOSS";
+const importedBossFrames = (worldFolder: string, folder: string, direction: "left" | "right", prefix: string, count: number) =>
+  Array.from({ length: count }, (_, index) =>
+    `${IMPORTED_BOSS_ROOT}/${encodeURI(worldFolder)}/${encodeURI(folder)}/${direction}/${encodeURIComponent(`${prefix}_${index}.png`)}?v=20260712-recovery`,
+  );
+type ImportedBossAnim = "idle" | "run" | "attack" | "dead" | "tied" | "untide";
+const IMPORTED_BOSS_SPRITES: Partial<Record<Biome, Partial<Record<ImportedBossAnim, { left: string[]; right: string[]; h: number; y: number }>>>> = {
+  volcano: {
+    idle: { left: importedBossFrames("3_Volcano Ruins", "Idle", "left", "lava boss", 62), right: importedBossFrames("3_Volcano Ruins", "Idle", "right", "lava boss", 62), h: 144, y: 2 },
+    run: { left: importedBossFrames("3_Volcano Ruins", "Running", "left", "lava boss", 15), right: importedBossFrames("3_Volcano Ruins", "Running", "right", "lava boss", 15), h: 144, y: 2 },
+    attack: { left: importedBossFrames("3_Volcano Ruins", "Attack", "left", "lava boss", 62), right: importedBossFrames("3_Volcano Ruins", "Attack", "right", "lava boss", 62), h: 144, y: 2 },
+    dead: { left: importedBossFrames("3_Volcano Ruins", "Death", "left", "lava boss", 54), right: importedBossFrames("3_Volcano Ruins", "Death", "right", "lava boss", 54), h: 144, y: 2 },
+  },
+  desert: {
+    idle: { left: importedBossFrames("4_Desert Sky Temple", "Idle", "left", "Desert Sky Temple-2026-07-01 03 13 25", 62), right: importedBossFrames("4_Desert Sky Temple", "Idle", "right", "Desert Sky Temple-2026-07-01 03 13 25", 62), h: 108, y: 0 },
+    run: { left: importedBossFrames("4_Desert Sky Temple", "Running", "left", "Desert Sky Temple-2026-07-01 03 13 25", 16), right: importedBossFrames("4_Desert Sky Temple", "Running", "right", "Desert Sky Temple-2026-07-01 03 13 25", 16), h: 108, y: 0 },
+    attack: { left: importedBossFrames("4_Desert Sky Temple", "Arrow", "left", "Desert Sky Temple-2026-07-01 03 13 25", 62), right: importedBossFrames("4_Desert Sky Temple", "Arrow", "right", "Desert Sky Temple-2026-07-01 03 13 25", 62), h: 108, y: 0 },
+    tied: { left: importedBossFrames("4_Desert Sky Temple", "Tied", "left", "Desert Sky Temple-2026-07-01 03 13 25", 54), right: importedBossFrames("4_Desert Sky Temple", "Tied", "right", "Desert Sky Temple-2026-07-01 03 13 25", 54), h: 108, y: 0 },
+    untide: { left: importedBossFrames("4_Desert Sky Temple", "Untide", "left", "Desert Sky Temple-2026-07-01 03 13 25", 54), right: importedBossFrames("4_Desert Sky Temple", "Untide", "right", "Desert Sky Temple-2026-07-01 03 13 25", 54), h: 108, y: 0 },
+    dead: { left: importedBossFrames("4_Desert Sky Temple", "Death", "left", "Desert Sky Temple-2026-07-01 03 13 25", 54), right: importedBossFrames("4_Desert Sky Temple", "Death", "right", "Desert Sky Temple-2026-07-01 03 13 25", 54), h: 108, y: 0 },
+  },
+  haunted: {
+    idle: { left: importedBossFrames("5_Haunted Moonwood", "Idle", "left", "boss ghost", 62), right: importedBossFrames("5_Haunted Moonwood", "Idle", "right", "boss ghost", 62), h: 150, y: 0 },
+    run: { left: importedBossFrames("5_Haunted Moonwood", "ghost attack", "left", "boss ghost", 62), right: importedBossFrames("5_Haunted Moonwood", "ghost attack", "right", "boss ghost", 62), h: 150, y: 0 },
+    attack: { left: importedBossFrames("5_Haunted Moonwood", "Attack", "left", "boss ghost", 43), right: importedBossFrames("5_Haunted Moonwood", "Attack", "right", "boss ghost", 43), h: 150, y: 0 },
+    dead: { left: importedBossFrames("5_Haunted Moonwood", "Death", "left", "boss ghost", 54), right: importedBossFrames("5_Haunted Moonwood", "Death", "right", "boss ghost", 54), h: 150, y: 0 },
+  },
+};
 const AUDIO_ROOT = "/assets/audio/mixkit";
 const AUDIO: Record<SoundName | "music", string> = {
   jump: `${AUDIO_ROOT}/jump.wav`,
@@ -506,6 +642,12 @@ const SPRITES: Record<AnimName, string[]> = {
   ),
   hurt: sequence("ADVENTURER/06-Hurt", "FR_Adventurer_Hurt", 6),
   dead: sequence("ADVENTURER/07-Dead", "FR_Adventurer_Dead", 9),
+  alexHurtRight: importedAlexPresentFrames("HURT", "right", 0, 1),
+  alexHurtLeft: importedAlexPresentFrames("HURT", "left", 0, 1),
+  alexDeadRight: importedAlexPresentFrames("dead", "right", 0, 62),
+  alexDeadLeft: importedAlexPresentFrames("dead", "left", 1, 61),
+  alexPitFallRight: importedAlexPresentFrames("fall", "right", 0, 62),
+  alexPitFallLeft: importedAlexPresentFrames("fall", "left", 0, 62),
   slimeIdle: sequence("SLIME04/01-Idle", "FR_Slime4_Idle", 12),
   slimeMove: sequence("SLIME04/02-Move", "FR_Slime4_Move", 10),
   slimeAttack: sequence("SLIME04/03-Attack", "FR_Slime4_Attack", 8),
@@ -517,6 +659,24 @@ const SPRITES: Record<AnimName, string[]> = {
   forestBee1Left: forestBeeFrames(1, "left"),
   forestBee2Right: forestBeeFrames(2, "right"),
   forestBee2Left: forestBeeFrames(2, "left"),
+  iceBlock1Right: importedIceBlockFrames(1, "right"),
+  iceBlock1Left: importedIceBlockFrames(1, "left"),
+  iceBlock2Right: importedIceBlockFrames(2, "right"),
+  iceBlock2Left: importedIceBlockFrames(2, "left"),
+  iceOwlRight: importedEnemyFrames("Ice Fortress", "Owl", "right", "bee", 62),
+  iceOwlLeft: importedEnemyFrames("Ice Fortress", "Owl", "left", "bee", 62),
+  volcanoMagmaRight: importedEnemyFrames("Volcanic Ruins", "Magma", "right", "slime 1", 62),
+  volcanoMagmaLeft: importedEnemyFrames("Volcanic Ruins", "Magma", "left", "slime 1", 62),
+  volcanoDinoRight: importedEnemyFrames("Volcanic Ruins", "dino", "right", "bee", 62),
+  volcanoDinoLeft: importedEnemyFrames("Volcanic Ruins", "dino", "left", "bee", 62),
+  desertPlantRight: importedEnemyFrames("Desert Sky Temple", "plant", "right", "slime 24", 125),
+  desertPlantLeft: importedEnemyFrames("Desert Sky Temple", "plant", "left", "slime 24", 125),
+  desertVulcurRight: importedEnemyFrames("Desert Sky Temple", "Vulcur", "right", "bee", 62),
+  desertVulcurLeft: importedEnemyFrames("Desert Sky Temple", "Vulcur", "left", "bee", 62),
+  hauntedPumpkinRight: importedEnemyFrames("Haunted Moonwood", "Pumpkin", "right", "slime 24", 62),
+  hauntedPumpkinLeft: importedEnemyFrames("Haunted Moonwood", "Pumpkin", "left", "slime 24", 62),
+  hauntedGhostRight: importedEnemyFrames("Haunted Moonwood", "ghost", "right", "bee 4", 125),
+  hauntedGhostLeft: importedEnemyFrames("Haunted Moonwood", "ghost", "left", "bee 4", 125),
 };
 const ROOT_GUARDIAN_SPRITES: Record<BossAnimName, string[]> = {
   idle: rootGuardianSingleDragonFrame,
@@ -550,19 +710,19 @@ const ROOT_GUARDIAN_SPRITES: Record<BossAnimName, string[]> = {
   meleeBack2Left: rootGuardianMeleeBackFrames(2, "left", 62),
 };
 const FROST_WARDEN_SPRITES: Record<FrostBossAnimName, string[]> = {
-  idle: numberedSequence("FROST_WARDEN_CUSTOM/01-Idle", 17),
-  run: numberedSequence("FROST_WARDEN_CUSTOM/02-Run", 17),
-  jump: numberedSequence("FROST_WARDEN_CUSTOM/03-Jump", 17),
-  slam: numberedSequence("FROST_WARDEN_CUSTOM/04-Slam", 17),
-  attack: numberedSequence("FROST_WARDEN_CUSTOM/05-Attack", 17),
-  hurt: numberedSequence("FROST_WARDEN_CUSTOM/06-Hurt", 17),
-  dead: numberedSequence("FROST_WARDEN_CUSTOM/07-Dead", 17),
+  idle: importedIceGuardianFrames("Idle", "right", 55),
+  run: importedIceGuardianFrames("Running", "right", 62),
+  jump: importedIceGuardianFrames("Running", "right", 62),
+  slam: importedIceGuardianFrames("Attack", "right", 62),
+  attack: importedIceGuardianFrames("Attack", "right", 62),
+  hurt: importedIceGuardianFrames("Broke", "right", 62),
+  dead: importedIceGuardianFrames("Death", "right", 62),
 };
 const VILLAIN_ROOT = "/assets/sprites/villains";
 const VILLAIN_BOSS_SPRITES: Partial<Record<Biome, { src: string; w: number; h: number; y: number; glow: string }>> = {
   forest: { src: `${VILLAIN_ROOT}/WORLD_02_MAGMA_GOLEM/boss.png`, w: 142, h: 158, y: 0, glow: "rgba(255, 239, 110, .8)" },
-  volcano: { src: `${VILLAIN_ROOT}/WORLD_03_MAGMA_GOLEM/boss.png`, w: 122, h: 122, y: 16, glow: "rgba(255, 112, 38, .46)" },
-  desert: { src: `${VILLAIN_ROOT}/WORLD_04_SAND_SERPENT/boss.png`, w: 148, h: 148, y: 8, glow: "rgba(241, 199, 109, .42)" },
+  volcano: { src: `/assets/imported/BOSS/3_Volcano%20Ruins/Idle/left/lava%20boss_0.png?v=20260712-recovery`, w: 176, h: 132, y: 10, glow: "rgba(255, 112, 38, .46)" },
+  desert: { src: `/assets/imported/BOSS/4_Desert%20Sky%20Temple/Idle/right/Desert%20Sky%20Temple-2026-07-01%2003%2013%2025_0.png?v=20260712-recovery`, w: 104, h: 96, y: 6, glow: "rgba(241, 199, 109, .42)" },
   haunted: { src: `${VILLAIN_ROOT}/WORLD_05_MOON_WRAITH/boss.png`, w: 150, h: 150, y: 8, glow: "rgba(190, 230, 255, .34)" },
   clockwork: { src: `${VILLAIN_ROOT}/WORLD_06_GEAR_TYRANT/boss.png`, w: 138, h: 138, y: 12, glow: "rgba(105, 210, 255, .36)" },
   ocean: { src: `${VILLAIN_ROOT}/WORLD_07_ABYSS_LEVIATHAN/boss.png`, w: 128, h: 168, y: -8, glow: "rgba(92, 241, 217, .34)" },
@@ -575,11 +735,28 @@ const LEVEL_BACKGROUNDS: Record<string, string> = {
   "1.1": "/assets/backgrounds/forest-level-1-1.png",
 };
 const FOREST_PIT_LAYER = "/assets/backgrounds/forest-1-1-layers/forest-pit-back.png";
+const IMPORTED_BACKGROUND_ROOT = "/assets/imported/Background";
+const ICE_FLOATING_GROUND = `${IMPORTED_BACKGROUND_ROOT}/Ice Fortress/Floating ground/Untitled-1-Recovered-Recovered-Recovered-Recovered-Recovered.png`;
+const VOLCANO_FLOATING_GROUND = `${IMPORTED_BACKGROUND_ROOT}/Volcanic Ruins/Floating ground/Untitled-1-Recovered-Recovered-Recovered-Recovered-Recovered-Recovered.png`;
+const DESERT_FLOATING_GROUND = `${IMPORTED_BACKGROUND_ROOT}/Desert Sky Temple/floating ground/Untitled-1.png`;
+const HAUNTED_FLOATING_GROUND = `${IMPORTED_BACKGROUND_ROOT}/Haunted Moonwood/Floating ground/prta.png`;
 const forestBackgroundLayers = (groundSrc: string) => [
   { src: "/assets/backgrounds/forest-1-1-layers/forest-1-1-far.png", speed: 0.18 },
   { src: "/assets/backgrounds/forest-1-1-layers/forest-1-1-mid.png", speed: 0.45 },
   { src: FOREST_PIT_LAYER, speed: 1 },
   { src: groundSrc, speed: 1 },
+];
+const importedBackgroundLayers = (biomeFolder: string, farVariant: "day" | "evening" | "night", farFile: string, midFile: string, pitFile: string, groundFile: string) => [
+  { src: `${IMPORTED_BACKGROUND_ROOT}/${biomeFolder}/far layer/${farVariant}/${farFile}`, speed: 0.18 },
+  { src: `${IMPORTED_BACKGROUND_ROOT}/${biomeFolder}/mid layer/${midFile}`, speed: 0.45 },
+  { src: `${IMPORTED_BACKGROUND_ROOT}/${biomeFolder}/Pit/${pitFile}`, speed: 1 },
+  { src: `${IMPORTED_BACKGROUND_ROOT}/${biomeFolder}/ground layer/${groundFile}`, speed: 1 },
+];
+const desertBackgroundLayers = [
+  { src: `${IMPORTED_BACKGROUND_ROOT}/Desert Sky Temple/far layer/back-Recovered.png`, speed: 0.18 },
+  { src: `${IMPORTED_BACKGROUND_ROOT}/Desert Sky Temple/mid layer/back-Recovered.png`, speed: 0.45 },
+  { src: `${IMPORTED_BACKGROUND_ROOT}/Desert Sky Temple/pit layer/back-Recovered.png`, speed: 1 },
+  { src: `${IMPORTED_BACKGROUND_ROOT}/Desert Sky Temple/ground layer/back-Recovered.png`, speed: 1 },
 ];
 const LEVEL_BACKGROUND_LAYERS: Record<string, { src: string; speed: number }[]> = {
   "1.1": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-1-ground-2.png"),
@@ -587,8 +764,35 @@ const LEVEL_BACKGROUND_LAYERS: Record<string, { src: string; speed: number }[]> 
   "1.3": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-3-ground-2.png"),
   "1.4": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-4-ground-2.png"),
   "1 Final": forestBackgroundLayers("/assets/backgrounds/forest-1-1-layers/forest-1-final-ground-2.png"),
+  "2.1": importedBackgroundLayers("Ice Fortress", "day", "back frpzen.png", "back frpzen.png", "back frpzen.png", "back frpzen.png"),
+  "2.2": importedBackgroundLayers("Ice Fortress", "evening", "back frpzen.png", "back frpzen.png", "back frpzen.png", "back frpzen.png"),
+  "2.3": importedBackgroundLayers("Ice Fortress", "evening", "back frpzen.png", "back frpzen.png", "back frpzen.png", "back frpzen.png"),
+  "2.4": importedBackgroundLayers("Ice Fortress", "night", "back frpzen.png", "back frpzen.png", "back frpzen.png", "back frpzen.png"),
+  "2 Final": importedBackgroundLayers("Ice Fortress", "night", "back frpzen.png", "back frpzen.png", "back frpzen.png", "back frpzen.png"),
+  "3.1": importedBackgroundLayers("Volcanic Ruins", "day", "back.png", "back.png", "back.png", "back.png"),
+  "3.2": importedBackgroundLayers("Volcanic Ruins", "evening", "back.png", "back.png", "back.png", "back.png"),
+  "3.3": importedBackgroundLayers("Volcanic Ruins", "evening", "back.png", "back.png", "back.png", "back.png"),
+  "3.4": importedBackgroundLayers("Volcanic Ruins", "night", "back.png", "back.png", "back.png", "back.png"),
+  "3 Final": importedBackgroundLayers("Volcanic Ruins", "night", "back.png", "back.png", "back.png", "back.png"),
+  "4.1": desertBackgroundLayers,
+  "4.2": desertBackgroundLayers,
+  "4.3": desertBackgroundLayers,
+  "4.4": desertBackgroundLayers,
+  "4 Final": desertBackgroundLayers,
+  "5.1": importedBackgroundLayers("Haunted Moonwood", "day", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "hm.png"),
+  "5.2": importedBackgroundLayers("Haunted Moonwood", "evening", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "hm.png"),
+  "5.3": importedBackgroundLayers("Haunted Moonwood", "evening", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "hm.png"),
+  "5.4": importedBackgroundLayers("Haunted Moonwood", "night", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "hm.png"),
+  "5 Final": importedBackgroundLayers("Haunted Moonwood", "night", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "Haunted Moonwood Back.png", "hm.png"),
 };
 const LEVEL_1_1_FLOATING_GROUND = "/assets/backgrounds/forest-1-1-layers/forest-1-1-floating-ground-clean.png";
+const floatingGroundForBiome = (biome: Biome) => {
+  if (biome === "ice") return ICE_FLOATING_GROUND;
+  if (biome === "volcano") return VOLCANO_FLOATING_GROUND;
+  if (biome === "desert") return DESERT_FLOATING_GROUND;
+  if (biome === "haunted") return HAUNTED_FLOATING_GROUND;
+  return LEVEL_1_1_FLOATING_GROUND;
+};
 const isWorldOneLevel = (levelId: string) => levelId === "1 Final" || levelId.startsWith("1.");
 const ENVIRONMENT_ASSETS: Record<Biome, { src: string; w: number; h: number }[]> = {
   forest: [
@@ -691,8 +895,8 @@ const makeEnemy = (x: number, dir: number, patrolMin: number, patrolMax: number,
   dead: 0,
   blood: 0,
   squash: 0,
-  pause: Math.floor(noise(x * 0.37) * 24),
-  wander: 60 + Math.floor(noise(x * 0.19) * 90),
+  pause: Math.floor(noise(x * 0.37) * 360),
+  wander: 60 + Math.floor(noise(x * 0.19) * 240),
   chase,
   patrolMin,
   patrolMax,
@@ -931,6 +1135,7 @@ const applyBiomeVariation = (level: Level, stage: number) => {
     level.coins.push({ x: 1220, y: 190, w: 22, h: 22, pulse: 1 }, { x: 3965, y: 185, w: 22, h: 22, pulse: 2 });
   }
   if (level.finalCastle) {
+    if (level.biome === "desert") level.bossDiamond = undefined;
     if (level.biome === "volcano") {
       level.platforms.push(
         { x: 720, y: 430, w: 190, h: 24 },
@@ -1014,10 +1219,18 @@ const enforceDedicatedBossArena = (level: Level) => {
   const arenaGroundY = 485;
   // Forest boss uses strict ground-combat arena to avoid hovering/altitude desync.
   if (level.biome === "forest") {
-    const pitEnd = FINAL_FOREST_FALL_PIT.x + FINAL_FOREST_FALL_PIT.w;
     level.platforms = [
-      { x: arenaLeft, y: arenaGroundY, w: FINAL_FOREST_FALL_PIT.x - arenaLeft, h: 110 },
-      { x: pitEnd, y: arenaGroundY, w: arenaRight - pitEnd, h: 110 },
+      { x: 0, y: 468, w: 310, h: 24 },
+      { x: 455, y: 408, w: 240, h: 24 },
+      { x: 850, y: 338, w: 285, h: 24 },
+      { x: 1295, y: 392, w: 220, h: 24 },
+      { x: 1660, y: 455, w: 340, h: 24 },
+      { x: 2170, y: 382, w: 250, h: 24 },
+      { x: 2580, y: 318, w: 305, h: 24 },
+      { x: 3040, y: 385, w: 230, h: 24 },
+      { x: 3410, y: 450, w: 315, h: 24 },
+      { x: 3900, y: 430, w: 240, h: 24 },
+      { x: arenaLeft, y: arenaGroundY, w: arenaRight - arenaLeft, h: 110 },
       { x: FOREST_BOSS_CAMERA_X + 100, y: 372, w: 220, h: 24, bossIgnore: true },
       { x: FOREST_BOSS_CAMERA_X + 375, y: 244, w: 220, h: 24, bossIgnore: true },
       { x: FOREST_BOSS_CAMERA_X + 650, y: 372, w: 220, h: 24, bossIgnore: true },
@@ -1037,7 +1250,10 @@ const enforceDedicatedBossArena = (level: Level) => {
       ? [{ x: FINAL_FOREST_FALL_PIT.x, y: arenaGroundY + 6, w: FINAL_FOREST_FALL_PIT.w, h: HEIGHT - arenaGroundY + 120 }]
       : [];
   level.coins = [];
-  level.powerUps = [];
+  level.powerUps =
+    level.biome === "forest"
+      ? [{ x: 141, y: 420, w: 28, h: 28, kind: "fire", amount: 8 }]
+      : [];
   level.lifePoints = [];
   level.checkpoints = level.id === "1 Final" ? [] : [{ x: BOSS_ARENA_LEFT + 34, y: arenaGroundY - 65, w: 42, h: 65 }];
   level.enemies = [];
@@ -1461,11 +1677,23 @@ const makeLevel = (stage = 0): Level => {
   }
   applyBiomeVariation(level, stage);
   sanitizeLevelOnePlainGround(level, stage);
+  if (stage === 1) {
+    level.platforms = level.platforms.map((plat) =>
+      plat.x === 2310 && plat.y === 343 && plat.w === 190 && plat.h === 24
+        ? { ...plat, x: 2240, y: 360, w: 220 }
+        : plat,
+    );
+  }
   applyForestFallPits(level, stage);
   snapStageActorsToGround(level);
   sanitizeIceBossArena(level, stage);
   enforceDedicatedBossArena(level);
-  level.environmentProps = isWorldOneLevel(level.id) || (stage === 9 && level.biome === "ice" && level.finalCastle) ? [] : makeEnvironmentProps(level, stage);
+  level.coins = [];
+  level.lifePoints = [];
+  level.environmentProps =
+    isWorldOneLevel(level.id) || level.biome === "volcano" || level.biome === "desert" || level.biome === "haunted" || (stage === 9 && level.biome === "ice" && level.finalCastle)
+      ? []
+      : makeEnvironmentProps(level, stage);
 
   return level;
 };
@@ -1493,16 +1721,27 @@ export default function Home() {
   const playerVisualStartFrame = useRef(0);
   const meleeFrameChoice = useRef(0);
   const nextMeleeFrame = useRef(0);
-  const lastMeleeDirection = useRef<1 | -1>(-1);
   const meleeNeutralUntilFrame = useRef(0);
   const camera = useRef(0);
   const raf = useRef(0);
   const images = useRef<Partial<Record<AnimName, HTMLImageElement[]>>>({});
   const bossImages = useRef<Partial<Record<BossAnimName, HTMLImageElement[]>>>({});
   const frostBossImages = useRef<Partial<Record<BossAnimName, HTMLImageElement[]>>>({});
+  const dragonFireImages = useRef<{ left: HTMLImageElement[]; right: HTMLImageElement[] }>({ left: [], right: [] });
   const villainBossImages = useRef<Partial<Record<Biome, HTMLImageElement>>>({});
+  const volcanoFireStoneImage = useRef<HTMLImageElement | null>(null);
+  const hauntedSpellImage = useRef<HTMLImageElement | null>(null);
+  const icePlayerFreezeImages = useRef<{ left?: HTMLImageElement; right?: HTMLImageElement }>({});
+  const importedBossImages = useRef<Record<string, HTMLImageElement[]>>({});
+  const hurtHudImages = useRef<HTMLImageElement[]>([]);
+  const canvasButtonImages = useRef<{ musicOn: HTMLImageElement | null; musicOff: HTMLImageElement | null; exit: HTMLImageElement | null; restart: HTMLImageElement | null }>({ musicOn: null, musicOff: null, exit: null, restart: null });
+  const alexHealthHudImages = useRef<{ border: HTMLImageElement | null; fill: HTMLImageElement | null }>({ border: null, fill: null });
+  const dragonHudImages = useRef<{ full: HTMLImageElement | null; dead: HTMLImageElement | null }>({ full: null, dead: null });
+  const bossHealthHudImages = useRef<{ cover: HTMLImageElement | null; fill: HTMLImageElement | null }>({ cover: null, fill: null });
   const environmentImages = useRef<Record<string, HTMLImageElement>>({});
   const levelBackgroundImages = useRef<Record<string, HTMLImageElement>>({});
+  const portalImages = useRef<Record<string, HTMLImageElement>>({});
+  const worldFireImages = useRef<Record<string, HTMLImageElement>>({});
   const loadedLevelAssets = useRef<Record<string, boolean>>({});
   const sounds = useRef<Partial<Record<SoundName, HTMLAudioElement>>>({});
   const activeSounds = useRef<HTMLAudioElement[]>([]);
@@ -1523,10 +1762,25 @@ export default function Home() {
   const [titleMusicOn, setTitleMusicOn] = useState(false);
   const [screen, setScreen] = useState<GameScreen>("menu");
   const [menuScreen, setMenuScreen] = useState<MenuScreen>("main");
+  const [canvasIntroPhase, setCanvasIntroPhase] = useState<CanvasIntroPhase>("logo");
+  const [canvasTouchReady, setCanvasTouchReady] = useState(false);
+  const [canvasMainReady, setCanvasMainReady] = useState(false);
+  const [canvasLogoMinTimeDone, setCanvasLogoMinTimeDone] = useState(false);
+  const [pendingCanvasMain, setPendingCanvasMain] = useState(false);
+  const [gameBrightness, setGameBrightness] = useState(100);
   const [gameOver, setGameOver] = useState(false);
   const [paused, setPaused] = useState(false);
   const [hasProgress, setHasProgress] = useState(false);
   const [levelLabel, setLevelLabel] = useState(`${WORLD_LEVELS[0].id}: ${WORLD_LEVELS[0].name}`);
+  const [moveStick, setMoveStick] = useState<{ active: boolean; x: number; y: number; dx: number; dy: number }>({
+    active: false,
+    x: 0,
+    y: 0,
+    dx: 0,
+    dy: 0,
+  });
+  const moveStickRef = useRef({ active: false, x: 0, y: 0, dx: 0, dy: 0 });
+  const moveStickPointerId = useRef<number | null>(null);
   const [loadingInfo, setLoadingInfo] = useState<LoadingInfo>({
     level: `${WORLD_LEVELS[0].id}: ${WORLD_LEVELS[0].name}`,
     world: WORLD_DEFINITIONS[0].name,
@@ -1541,6 +1795,34 @@ export default function Home() {
   useEffect(() => {
     hudRef.current = hud;
   }, [hud]);
+
+  useEffect(() => {
+    const touchImage = new Image();
+    const mainImage = new Image();
+    touchImage.onload = () => setCanvasTouchReady(true);
+    mainImage.onload = () => setCanvasMainReady(true);
+    touchImage.src = CANVAS_TOUCH_SRC;
+    mainImage.src = CANVAS_MAIN_SRC;
+    return () => {
+      touchImage.onload = null;
+      mainImage.onload = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCanvasLogoMinTimeDone(true), 2000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (canvasIntroPhase === "logo" && canvasTouchReady && canvasLogoMinTimeDone) setCanvasIntroPhase("touch");
+  }, [canvasIntroPhase, canvasLogoMinTimeDone, canvasTouchReady]);
+
+  useEffect(() => {
+    if (!pendingCanvasMain || !canvasMainReady) return;
+    setCanvasIntroPhase("main");
+    setPendingCanvasMain(false);
+  }, [canvasMainReady, pendingCanvasMain]);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -1570,6 +1852,8 @@ export default function Home() {
       if (isWorldOneLevel(theme.id)) {
         backgroundSources.add(LEVEL_1_1_FLOATING_GROUND);
         backgroundSources.add(FOREST_PIT_LAYER);
+      } else {
+        backgroundSources.add(floatingGroundForBiome(theme.biome));
       }
 
       await Promise.all([
@@ -1579,9 +1863,17 @@ export default function Home() {
         ...Array.from(backgroundSources).map(async (src) => {
           if (!levelBackgroundImages.current[src]?.complete) levelBackgroundImages.current[src] = await loadImageAsset(src);
         }),
+        ...worldFireSources(theme.biome).map(async (src) => {
+          if (!worldFireImages.current[src]?.complete) worldFireImages.current[src] = await loadImageAsset(src);
+        }),
       ]);
 
       if (theme.finalCastle) {
+        await Promise.all(
+          nextWorldPortalSources(theme.biome).map(async (src) => {
+            if (!portalImages.current[src]?.complete) portalImages.current[src] = await loadImageAsset(src);
+          }),
+        );
         if (theme.biome === "forest") {
           await Promise.all(
             (Object.keys(ROOT_GUARDIAN_SPRITES) as BossAnimName[]).map(async (name) => {
@@ -1593,6 +1885,8 @@ export default function Home() {
               if (framesChanged) bossImages.current[name] = await Promise.all(sources.map(loadImageAsset));
             }),
           );
+          if (!dragonFireImages.current.left.length) dragonFireImages.current.left = await Promise.all(importedDragonFireFrames("left").map(loadImageAsset));
+          if (!dragonFireImages.current.right.length) dragonFireImages.current.right = await Promise.all(importedDragonFireFrames("right").map(loadImageAsset));
         } else if (theme.biome === "ice") {
           await Promise.all(
             (Object.keys(FROST_WARDEN_SPRITES) as FrostBossAnimName[]).map(async (name) => {
@@ -1603,6 +1897,29 @@ export default function Home() {
         const villainSprite = VILLAIN_BOSS_SPRITES[theme.biome];
         if (villainSprite && !villainBossImages.current[theme.biome]?.complete) {
           villainBossImages.current[theme.biome] = await loadImageAsset(villainSprite.src);
+        }
+        if (theme.biome === "volcano" && !volcanoFireStoneImage.current?.complete) {
+          volcanoFireStoneImage.current = await loadImageAsset("/assets/imported/BOSS/3_Volcano%20Ruins/Fire%20stone/Danish%20Airfryer_0.png?v=20260712-recovery");
+        }
+        if (theme.biome === "haunted" && !hauntedSpellImage.current?.complete) {
+          hauntedSpellImage.current = await loadImageAsset("/assets/imported/BOSS/5_Haunted%20Moonwood/Spell/boss%20ghost_0.png?v=20260712-recovery");
+        }
+        if (theme.biome === "ice" && (!icePlayerFreezeImages.current.left?.complete || !icePlayerFreezeImages.current.right?.complete)) {
+          const leftFreeze = await loadImageAsset("/assets/imported/BOSS/2_Ice%20Guardian/Player%20freeze/left/ALEX%20Present_0.png?v=20260712-recovery");
+          const rightFreeze = await loadImageAsset("/assets/imported/BOSS/2_Ice%20Guardian/Player%20freeze/right/ALEX%20Present_0.png?v=20260712-recovery");
+          icePlayerFreezeImages.current = { left: leftFreeze, right: rightFreeze };
+        }
+        const importedBossSet = IMPORTED_BOSS_SPRITES[theme.biome];
+        if (importedBossSet) {
+          await Promise.all(
+            (Object.keys(importedBossSet) as ImportedBossAnim[]).flatMap((animName) =>
+              (["left", "right"] as const).map(async (direction) => {
+                const key = `${theme.biome}:${animName}:${direction}`;
+                const sources = importedBossSet[animName]?.[direction];
+                if (sources?.length && !importedBossImages.current[key]?.length) importedBossImages.current[key] = await Promise.all(sources.map(loadImageAsset));
+              }),
+            ),
+          );
         }
       }
 
@@ -1885,6 +2202,26 @@ export default function Home() {
       ...(Object.keys(SPRITES) as AnimName[]).map(async (name) => {
         images.current[name] = await Promise.all(SPRITES[name].map(loadImageAsset));
       }),
+      (async () => {
+        hurtHudImages.current = await Promise.all(CANVAS_HURT_HUD_FRAMES.map(loadImageAsset));
+        const [musicOnButton, musicOffButton, exitButton, restartButton] = await Promise.all([
+          loadImageAsset(CANVAS_BUTTONS.musicOn),
+          loadImageAsset(CANVAS_BUTTONS.musicOff),
+          loadImageAsset(CANVAS_BUTTONS.exit),
+          loadImageAsset(CANVAS_BUTTONS.restart),
+        ]);
+        canvasButtonImages.current = { musicOn: musicOnButton, musicOff: musicOffButton, exit: exitButton, restart: restartButton };
+        const [border, fill] = await Promise.all([loadImageAsset(ALEX_HEALTH_BORDER_SRC), loadImageAsset(ALEX_HEALTH_FILL_SRC)]);
+        alexHealthHudImages.current = { border, fill };
+        const [dragonFull, dragonDead, bossCover, bossFill] = await Promise.all([
+          loadImageAsset(DRAGON_HUD_FULL_SRC),
+          loadImageAsset(DRAGON_HUD_DEAD_SRC),
+          loadImageAsset(BOSS_HEALTH_COVER_SRC),
+          loadImageAsset(BOSS_HEALTH_FILL_SRC),
+        ]);
+        dragonHudImages.current = { full: dragonFull, dead: dragonDead };
+        bossHealthHudImages.current = { cover: bossCover, fill: bossFill };
+      })(),
     ]).then(() => {
       if (!cancelled) setAssetsReady(true);
     });
@@ -1987,18 +2324,22 @@ export default function Home() {
     setGameOver(false);
     setPaused(false);
     startAudio();
+    if (music.current) {
+      music.current.currentTime = 0;
+      if (soundOn && !audio.current?.bossMusic) void music.current.play().catch(() => undefined);
+    }
     startLevelLoading(currentLevel.current, false);
-  }, [startAudio, startLevelLoading]);
+  }, [soundOn, startAudio, startLevelLoading]);
 
   const startNewGame = useCallback(() => {
-    restart();
-  }, [restart]);
+    setMenuScreen("levels");
+    setCanvasIntroPhase("main");
+  }, []);
 
   const continueGame = useCallback(() => {
-    if (!hasProgress) return;
-    startAudio();
-    startLevelLoading(currentLevel.current, true);
-  }, [hasProgress, startAudio, startLevelLoading]);
+    setMenuScreen("levels");
+    setCanvasIntroPhase("main");
+  }, []);
 
   const startSelectedLevel = useCallback(
     (stage: number) => {
@@ -2018,16 +2359,14 @@ export default function Home() {
     stopAudio();
     setScreen("menu");
     setMenuScreen("main");
+    setCanvasIntroPhase("main");
     startTitleMusic();
   }, [clearLoadingTimers, startTitleMusic, stopAudio]);
 
   useEffect(() => {
-    if (!assetsReady || screen !== "menu" || hasProgress) return;
-    const savedStage = Number(window.sessionStorage.getItem(ACTIVE_LEVEL_STORAGE_KEY));
-    if (!Number.isFinite(savedStage)) return;
-    setHasProgress(true);
-    startLevelLoading(savedStage, false);
-  }, [assetsReady, hasProgress, screen, startLevelLoading]);
+    if (screen !== "menu") return;
+    window.sessionStorage.removeItem(ACTIVE_LEVEL_STORAGE_KEY);
+  }, [screen]);
 
   const toggleTitleMusic = useCallback(() => {
     if (titleAudio.current) {
@@ -2090,6 +2429,7 @@ export default function Home() {
     }));
     p.dead = 1;
     p.deadFall = !p.grounded;
+    p.power = 0;
     p.vx = 0;
     p.vy = p.deadFall ? Math.max(2, p.vy) : 0;
     p.attack = 0;
@@ -2137,7 +2477,7 @@ export default function Home() {
     };
     const down = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      const controlKey = ["arrowleft", "arrowright", "arrowup", " ", "a", "d", "s", "w", "k", "e", "f", "c", "r", "m", "p"].includes(key);
+      const controlKey = ["arrowleft", "arrowright", "arrowup", " ", "a", "d", "s", "w", "k", "e", "f", "c", "r", "m", "p", "l"].includes(key);
       if (controlKey) event.preventDefault();
 
       if (key === "m" && !event.repeat) {
@@ -2165,6 +2505,36 @@ export default function Home() {
         return;
       }
 
+      if (screen === "playing" && key === "l" && !event.repeat) {
+        const map = level.current;
+        map.enemies.forEach((enemy) => {
+          enemy.alive = false;
+          enemy.dead = Math.max(enemy.dead, 20);
+        });
+        map.flyingEnemies.forEach((enemy) => {
+          enemy.alive = false;
+          enemy.dead = Math.max(enemy.dead, 20);
+          enemy.puff = Math.max(enemy.puff, 20);
+        });
+        const bossState = boss.current;
+        if (bossState && bossState.alive) {
+          bossState.health = 0;
+          bossState.alive = false;
+          bossState.defeated = true;
+          bossState.phase = "defeated";
+          bossState.deathFrame = 0;
+          bossState.dissolve = 70;
+          const bossDiedOnRight = bossState.x + bossState.w / 2 > (BOSS_ARENA_LEFT + BOSS_ARENA_RIGHT) / 2;
+          map.goal = bossDiedOnRight
+            ? { x: BOSS_ARENA_LEFT + 26, y: 218, w: 190, h: 250 }
+            : { x: BOSS_ARENA_RIGHT - 226, y: 218, w: 190, h: 250 };
+          map.bossDiamond = undefined;
+          stopBossMusic();
+        }
+        setHud((value) => ({ ...value, message: "Level enemies cleared." }));
+        return;
+      }
+
       if (pausedRef.current) return;
 
       if (["arrowleft", "a"].includes(key)) setKey("left", true);
@@ -2174,11 +2544,8 @@ export default function Home() {
         setKey("jump", true);
         startAudio();
       }
-      if (key === "e" && !event.repeat) {
-        meleeFrameChoice.current = nextMeleeFrame.current;
-        nextMeleeFrame.current = (nextMeleeFrame.current + 1) % 2;
-      }
       if (["k", "e"].includes(key)) {
+        if (event.repeat) return;
         setKey("kick", true);
         startAudio();
       }
@@ -2232,6 +2599,51 @@ export default function Home() {
       }
       ctx.restore();
       return true;
+    };
+    const drawImagePreserveAspect = (image: HTMLImageElement, centerX: number, centerY: number, maxW: number, maxH: number, face = 1) => {
+      if (!image.complete || !image.naturalWidth || !image.naturalHeight) return false;
+      const scale = Math.min(maxW / image.naturalWidth, maxH / image.naturalHeight);
+      const drawW = image.naturalWidth * scale;
+      const drawH = image.naturalHeight * scale;
+      const x = centerX - drawW / 2;
+      const y = centerY - drawH / 2;
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      if (face < 0) {
+        ctx.translate(Math.round(x - camera.current + drawW), Math.round(y));
+        ctx.scale(-1, 1);
+        ctx.drawImage(image, 0, 0, drawW, drawH);
+      } else {
+        ctx.drawImage(image, Math.round(x - camera.current), Math.round(y), drawW, drawH);
+      }
+      ctx.restore();
+      return true;
+    };
+    const drawSpritePreserveAspect = (anim: AnimName, frame: number, centerX: number, centerY: number, maxW: number, maxH: number, face = 1, frameStep = 1) => {
+      const loadedFrames = images.current[anim]?.filter((image) => image.complete && image.naturalWidth);
+      const image = loadedFrames?.[Math.floor(frame / frameStep) % loadedFrames.length];
+      return image ? drawImagePreserveAspect(image, centerX, centerY, maxW, maxH, face) : false;
+    };
+    const drawImagePreserveAspectRotated = (image: HTMLImageElement, centerX: number, centerY: number, maxW: number, maxH: number, angle: number) => {
+      if (!image.complete || !image.naturalWidth || !image.naturalHeight) return false;
+      const scale = Math.min(maxW / image.naturalWidth, maxH / image.naturalHeight);
+      const drawW = image.naturalWidth * scale;
+      const drawH = image.naturalHeight * scale;
+      ctx.save();
+      ctx.translate(centerX - camera.current, centerY);
+      ctx.rotate(angle);
+      ctx.drawImage(image, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
+      return true;
+    };
+    const worldFireImage = (biome: Biome, part: "canvas" | "gameplay" | "player", frame = 0) => {
+      const assets = WORLD_FIRE_ASSETS[biome];
+      if (!assets) return undefined;
+      if (part === "canvas") return worldFireImages.current[`${IMPORTED_COINS_ROOT}/${encodeURI(assets.folder)}/${encodeURI(assets.canvas)}?v=20260710`];
+      const count = part === "gameplay" ? assets.gameplayCount : assets.playerCount;
+      const start = part === "gameplay" ? assets.gameplayStart : assets.playerStart;
+      return worldFireImages.current[importedFirePath(assets.folder, part === "gameplay" ? "Gameplay" : "player", start + (Math.floor(frame) % count))];
     };
     const drawEnvironmentProp = (prop: EnvironmentProp) => {
       const image = environmentImages.current[prop.src];
@@ -2432,7 +2844,22 @@ export default function Home() {
         const bob = Math.sin(frame * 0.45 + enemy.flap) * 3;
         const spriteW = 96;
         const spriteH = 72;
-        const drawn = drawSprite(anim, Math.floor(frame / 2), enemy.x + enemy.w / 2 - spriteW / 2, enemy.y + enemy.h / 2 - spriteH / 2 + bob, spriteW, spriteH, 1);
+        const drawn = drawSprite(anim, Math.floor((frame + enemy.flap * 9) / (60 / 30)), enemy.x + enemy.w / 2 - spriteW / 2, enemy.y + enemy.h / 2 - spriteH / 2 + bob, spriteW, spriteH, 1);
+        if (drawn) return;
+      }
+      const flyingAnimByBiome: Partial<Record<Biome, [AnimName, AnimName]>> = {
+        ice: ["iceOwlRight", "iceOwlLeft"],
+        volcano: ["volcanoDinoRight", "volcanoDinoLeft"],
+        desert: ["desertVulcurRight", "desertVulcurLeft"],
+        haunted: ["hauntedGhostRight", "hauntedGhostLeft"],
+      };
+      const flyingAnimPair = flyingAnimByBiome[level.current.biome];
+      if (flyingAnimPair) {
+        const anim = enemy.dir > 0 ? flyingAnimPair[0] : flyingAnimPair[1];
+        const bob = Math.sin(frame * 0.45 + enemy.flap) * 3;
+        const spriteW = level.current.biome === "volcano" ? 128 : level.current.biome === "haunted" ? 124 : level.current.biome === "desert" ? 118 : level.current.biome === "ice" ? 112 : 98;
+        const spriteH = level.current.biome === "volcano" ? 96 : level.current.biome === "haunted" ? 94 : level.current.biome === "desert" ? 88 : level.current.biome === "ice" ? 84 : 74;
+        const drawn = drawSpritePreserveAspect(anim, Math.floor((frame + enemy.flap * 9) / (60 / 30)), enemy.x + enemy.w / 2, enemy.y + enemy.h / 2 + bob, spriteW, spriteH, 1, 5);
         if (drawn) return;
       }
       const wing = Math.sin(frame * 0.9 + enemy.flap) * 9;
@@ -2736,7 +3163,66 @@ export default function Home() {
       ctx.fillRect(x - 14, y + 45, 14, 30);
       ctx.fillRect(x + goal.w, y + 45, 14, 30);
     };
-    const drawBossHealth = (bossState: Boss) => {
+    const drawBossHealth = (bossState: Boss, includeForestHud = true) => {
+      if (bossState.biome === "forest") {
+        if (!includeForestHud) return;
+        const ratio = Math.max(0, Math.min(1, bossState.health / bossState.maxHealth));
+        const dragonIcon = bossState.health > 0 ? dragonHudImages.current.full : dragonHudImages.current.dead;
+        const bossCover = bossHealthHudImages.current.cover;
+        const bossFill = bossHealthHudImages.current.fill;
+        const iconX = 16;
+        const iconY = 105;
+        const iconSize = 124;
+        const barX = 117;
+        const barY = 171;
+        const barW = 235;
+        const coverH = Math.round(barW * (BOSS_HEALTH_COVER_CROP.h / BOSS_HEALTH_COVER_CROP.w));
+        const fillX = barX;
+        const fillY = barY;
+        const fillW = barW;
+        const fillH = coverH;
+        ctx.save();
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        if (bossFill?.complete && bossFill.naturalWidth && bossFill.naturalHeight) {
+          const visibleW = fillW * ratio;
+          if (visibleW > 0) {
+            ctx.drawImage(
+              bossFill,
+              BOSS_HEALTH_FILL_CROP.x,
+              BOSS_HEALTH_FILL_CROP.y,
+              BOSS_HEALTH_FILL_CROP.w * ratio,
+              BOSS_HEALTH_FILL_CROP.h,
+              fillX,
+              fillY,
+              visibleW,
+              fillH,
+            );
+          }
+        }
+        if (bossCover?.complete && bossCover.naturalWidth) {
+          ctx.drawImage(
+            bossCover,
+            BOSS_HEALTH_COVER_CROP.x,
+            BOSS_HEALTH_COVER_CROP.y,
+            BOSS_HEALTH_COVER_CROP.w,
+            BOSS_HEALTH_COVER_CROP.h,
+            barX,
+            barY,
+            barW,
+            coverH,
+          );
+        } else {
+          ctx.strokeStyle = "rgba(255,255,255,.75)";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(barX, barY, barW, coverH);
+        }
+        if (dragonIcon?.complete && dragonIcon.naturalWidth) {
+          ctx.drawImage(dragonIcon, 280, 0, 720, 720, iconX, iconY, iconSize, iconSize);
+        }
+        ctx.restore();
+        return;
+      }
       const style = biomeStyle(bossState.biome);
       ctx.fillStyle = "rgba(0,0,0,.55)";
       ctx.fillRect(300, 64, 360, 18);
@@ -2759,6 +3245,7 @@ export default function Home() {
       const renderFace = bossState.biome === "forest" ? bossState.face : defeatedPose ? bossState.face : bossFacing(bossState, playerX);
       const weak = bossState.vulnerable > 0;
       const drawDownloadedVillain = () => {
+        if (IMPORTED_BOSS_SPRITES[bossState.biome]) return false;
         const sprite = VILLAIN_BOSS_SPRITES[bossState.biome];
         const image = villainBossImages.current[bossState.biome];
         if (!sprite || !image?.complete || !image.naturalWidth) return false;
@@ -2776,9 +3263,44 @@ export default function Home() {
           ctx.drawImage(image, drawX, drawY, sprite.w, sprite.h);
         }
         ctx.restore();
-        drawBossHealth(bossState);
+        drawBossHealth(bossState, false);
         return true;
       };
+      const drawImportedBiomeBoss = () => {
+        const importedSet = IMPORTED_BOSS_SPRITES[bossState.biome];
+        if (!importedSet) return false;
+        const customImportedMode = (bossState as Boss & { customMode?: ImportedBossAnim }).customMode;
+        const importedAnim: ImportedBossAnim =
+          bossState.phase === "defeated"
+            ? "dead"
+            : customImportedMode === "tied" || customImportedMode === "untide"
+              ? customImportedMode
+              : bossState.phase === "jumping" || bossState.slam > 0
+                ? "attack"
+                : Math.abs(bossState.vx) > 0.05 || bossState.phase === "chasing"
+                  ? "run"
+                  : "idle";
+        const direction = renderFace < 0 ? "left" : "right";
+        const spriteDef = importedSet[importedAnim] ?? importedSet.idle;
+        if (!spriteDef) return false;
+        const frames = importedBossImages.current[`${bossState.biome}:${importedAnim}:${direction}`] ?? importedBossImages.current[`${bossState.biome}:idle:${direction}`];
+        if (!frames?.length) return false;
+        const frameIndex = bossState.phase === "defeated" ? Math.min(frames.length - 1, Math.floor(bossState.deathFrame)) : Math.floor(frame / (60 / 11.8)) % frames.length;
+        const image = frames[frameIndex];
+        if (!image?.complete || !image.naturalWidth || !image.naturalHeight) return false;
+        const drawH = spriteDef.h;
+        const drawW = drawH * (image.naturalWidth / image.naturalHeight);
+        const drawX = x + bossState.w / 2 - drawW / 2;
+        const drawY = y + bossState.h - drawH + spriteDef.y;
+        ctx.save();
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(image, drawX, drawY, drawW, drawH);
+        ctx.restore();
+        drawBossHealth(bossState, false);
+        return true;
+      };
+      if (drawImportedBiomeBoss()) return;
       if (bossState.biome === "forest") {
         const forcedFrame = bossState.phase === "defeated" ? bossState.deathFrame : undefined;
         const clawing = bossState.meleeWindup > 0;
@@ -2871,7 +3393,7 @@ export default function Home() {
         const useDirectionalFire = anim === "idleDragonRight" || anim === "idleDragonLeft" || anim === "fireReadyRight" || anim === "fireReadyLeft" || anim === "fireCycleRight" || anim === "fireCycleLeft" || anim === "fireDoneRight" || anim === "fireDoneLeft";
         const useDirectionalMeleeFront = anim === "meleeFront1Right" || anim === "meleeFront1Left" || anim === "meleeFront2Right" || anim === "meleeFront2Left" || anim === "meleeBack1Right" || anim === "meleeBack1Left" || anim === "meleeBack2Right" || anim === "meleeBack2Left";
         const renderAnim: BossAnimName = useForestFly ? anim : anim;
-        const renderFrameStep = useForestFly || useDirectionalFire || useDirectionalMeleeFront ? 1 : useDirectionalForestLaugh ? 2 : forestFrameStep;
+        const renderFrameStep = useForestFly || useDirectionalFire || useDirectionalForestLaugh || useDirectionalMeleeFront ? 1 : forestFrameStep;
         const renderBossFace = useForestFly || useDirectionalForestDead || useDirectionalForestLaugh || useDirectionalFire || useDirectionalMeleeFront ? 1 : renderFace;
         const fireFrameTicks = bossState.breathStage === "idle" || bossState.breathStage === "postIdle" ? FOREST_IDLE_FRAME_TICKS : bossState.breathStage === "ready" ? FOREST_FIRE_READY_FRAME_TICKS : bossState.breathStage === "cycle" ? FOREST_FIRE_CYCLE_FRAME_TICKS : FOREST_FIRE_DONE_FRAME_TICKS;
         const fireFrame = useDirectionalFire
@@ -2901,11 +3423,10 @@ export default function Home() {
         );
         ctx.restore();
         if (drewBoss) {
-          drawBossHealth(bossState);
+          drawBossHealth(bossState, false);
           return;
         }
       }
-      // World 2 (ice) boss intentionally avoids sprite-sheet rendering.
       if (drawDownloadedVillain()) return;
       if (bossState.biome === "ice") {
         ctx.save();
@@ -3021,7 +3542,7 @@ export default function Home() {
         ctx.closePath();
         ctx.fill();
 
-        drawBossHealth(bossState);
+        drawBossHealth(bossState, false);
         ctx.restore();
         return;
       }
@@ -3055,7 +3576,7 @@ export default function Home() {
       ctx.moveTo(x + bossState.w - 12, y + 82);
       ctx.lineTo(x + bossState.w + 22, y + 118 - Math.sin(frame * 0.3) * 8);
       ctx.stroke();
-      drawBossHealth(bossState);
+      drawBossHealth(bossState, false);
       ctx.restore();
     };
     const drawForestExit = (goal: Entity, levelId: string) => {
@@ -3092,6 +3613,23 @@ export default function Home() {
       ctx.beginPath();
       ctx.ellipse(x + goal.w / 2, y + goal.h - 4, goal.w * 0.38, 8, 0, 0, Math.PI * 2);
       ctx.fill();
+    };
+    const drawNextWorldPortal = (goal: Entity, biome: Biome, overlay = false) => {
+      const folder = NEXT_WORLD_PORTAL_FOLDER[biome];
+      if (!folder) return;
+      const side = goal.x + goal.w / 2 < BOSS_ARENA_LEFT + WIDTH / 2 ? "left" : "right";
+      const src = `${IMPORTED_PORTAL_ROOT}/${encodeURI(folder)}/${side}${overlay ? "%20overlay" : ""}.png?v=20260710`;
+      const image = portalImages.current[src];
+      if (!image?.complete || !image.naturalWidth || !image.naturalHeight) return;
+      const drawH = Math.max(230, Math.min(320, goal.h + 95));
+      const drawW = drawH * (image.naturalWidth / image.naturalHeight);
+      const x = goal.x + goal.w / 2 - drawW / 2 - camera.current;
+      const y = goal.y + goal.h - drawH;
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(image, x, y, drawW, drawH);
+      ctx.restore();
     };
     const drawBloodBurst = (enemy: Enemy) => {
       if (enemy.blood <= 0) return;
@@ -3147,6 +3685,12 @@ export default function Home() {
         ctx.fill();
       }
       if (type === "fire") {
+        const importedFireIcon = worldFireImage(level.current.biome, "canvas");
+        if (importedFireIcon?.complete && importedFireIcon.naturalWidth) {
+          drawImagePreserveAspect(importedFireIcon, camera.current, 0, 58, 58);
+          ctx.restore();
+          return;
+        }
         const fireAmmoIcon = images.current.fireAmmoCounter?.[0];
         if (fireAmmoIcon?.complete && fireAmmoIcon.naturalWidth) {
           ctx.drawImage(fireAmmoIcon, -26, -26, 52, 52);
@@ -3561,8 +4105,8 @@ export default function Home() {
 
       map.platforms.forEach((plat) => {
         if (isWorldOneLevel(map.id) && plat.y >= 430 && plat.h >= 35) return;
-        if (isWorldOneLevel(map.id)) {
-          const floatingGround = levelBackgroundImages.current[LEVEL_1_1_FLOATING_GROUND];
+        if (isWorldOneLevel(map.id) || (["ice", "volcano", "desert", "haunted"].includes(map.biome) && plat.y < 430)) {
+          const floatingGround = levelBackgroundImages.current[floatingGroundForBiome(map.biome)];
           if (floatingGround?.complete && floatingGround.naturalWidth) {
             const drawW = plat.w;
             const drawH = Math.max(44, Math.min(78, (drawW * floatingGround.naturalHeight) / floatingGround.naturalWidth));
@@ -3661,7 +4205,10 @@ export default function Home() {
         if (powerUp.taken) return;
         const x = powerUp.x + powerUp.w / 2 - camera.current;
         const y = powerUp.y + powerUp.h / 2 + Math.sin(frame * 0.3) * 4;
-        const drewPowerUp = drawSprite("firePowerUp", frame, powerUp.x + powerUp.w / 2 - 26, y - 26, 52, 52, 1);
+        const importedPowerUp = worldFireImage(map.biome, "gameplay", Math.floor(frame / 3));
+        const drewPowerUp = importedPowerUp
+          ? drawImagePreserveAspect(importedPowerUp, powerUp.x + powerUp.w / 2, y, 56, 56, 1)
+          : drawSprite("firePowerUp", frame, powerUp.x + powerUp.w / 2 - 26, y - 26, 52, 52, 1);
         if (drewPowerUp) return;
         ctx.fillStyle = "#ffef6e";
         ctx.beginPath();
@@ -3686,7 +4233,9 @@ export default function Home() {
         ctx.fill();
       });
       projectiles.current.forEach((shot) => {
-        if (drawSprite("playerFireProjectile", frame, shot.x, shot.y, 18, 18, shot.vx >= 0 ? 1 : -1)) return;
+        const importedProjectile = worldFireImage(map.biome, "player", Math.floor(frame / 3));
+        if (importedProjectile && drawImagePreserveAspect(importedProjectile, shot.x + shot.w / 2, shot.y + shot.h / 2, Math.max(34, shot.w), Math.max(34, shot.h), shot.vx >= 0 ? 1 : -1)) return;
+        if (drawSprite("playerFireProjectile", frame * 2, shot.x, shot.y, shot.w, shot.h, shot.vx >= 0 ? 1 : -1)) return;
         const x = shot.x - camera.current;
         ctx.fillStyle = "#ffef6e";
         ctx.beginPath();
@@ -3696,8 +4245,22 @@ export default function Home() {
         ctx.fillRect(x - (shot.vx > 0 ? 18 : -shot.w), shot.y + 4, 18, 4);
       });
       bossProjectiles.current.forEach((shot) => {
+        if (shot.kind === "fire" && level.current.biome === "forest") {
+          const direction = shot.fireDirection ?? (shot.vx < 0 ? "left" : "right");
+          const frames = dragonFireImages.current[direction];
+          const image = frames.length ? frames[Math.floor(frame / 3) % frames.length] : undefined;
+          if (image) {
+            const angle = Math.atan2(shot.vy, shot.vx) - (direction === "left" ? Math.PI : 0);
+            drawImagePreserveAspectRotated(image, shot.x + shot.w / 2, shot.y + shot.h / 2, Math.max(72, shot.w * 2.6), Math.max(72, shot.h * 2.6), angle);
+          }
+          return;
+        }
         if (shot.kind === "fire") return;
         const x = shot.x - camera.current;
+        if (shot.kind === "shard" && level.current.biome === "volcano" && volcanoFireStoneImage.current?.complete) {
+          drawImagePreserveAspect(volcanoFireStoneImage.current, shot.x + shot.w / 2, shot.y + shot.h / 2, 42, 42, shot.vx >= 0 ? 1 : -1);
+          return;
+        }
         if (shot.kind === "wave") {
           ctx.fillStyle = "rgba(160,237,255,.65)";
           ctx.fillRect(x, shot.y, shot.w, shot.h);
@@ -3716,17 +4279,30 @@ export default function Home() {
         if (!enemy.alive && enemy.dead <= 0) return;
         drawBloodBurst(enemy);
         const useForestSlime = map.biome === "forest";
+        const biomeGroundAnim = (): AnimName | null => {
+          if (map.biome === "ice") {
+            const style = noise(enemy.x * 0.013) > 0.5 ? 2 : 1;
+            if (style === 2) return enemy.dir > 0 ? "iceBlock2Right" : "iceBlock2Left";
+            return enemy.dir > 0 ? "iceBlock1Right" : "iceBlock1Left";
+          }
+          if (map.biome === "volcano") return enemy.dir > 0 ? "volcanoMagmaRight" : "volcanoMagmaLeft";
+          if (map.biome === "desert") return enemy.dir > 0 ? "desertPlantRight" : "desertPlantLeft";
+          if (map.biome === "haunted") return enemy.dir > 0 ? "hauntedPumpkinRight" : "hauntedPumpkinLeft";
+          return null;
+        };
+        const worldGroundAnim = biomeGroundAnim();
         const anim: AnimName = useForestSlime
           ? enemy.dir > 0
             ? "forestSlimeRight"
             : "forestSlimeLeft"
-          : !enemy.alive
-            ? "slimeDead"
-            : enemy.hurt > 0
-              ? "slimeHurt"
-              : Math.abs(enemy.x - p.x) < 58
-                ? "slimeAttack"
-                : "slimeMove";
+          : worldGroundAnim ??
+            (!enemy.alive
+              ? "slimeDead"
+              : enemy.hurt > 0
+                ? "slimeHurt"
+                : Math.abs(enemy.x - p.x) < 58
+                  ? "slimeAttack"
+                  : "slimeMove");
         const squash = !enemy.alive ? enemy.squash : 0;
         const stompDissolve = !enemy.alive ? 1 - Math.max(0, Math.min(1, enemy.dead / 56)) : 0;
         const sink = stompDissolve * 48;
@@ -3734,8 +4310,11 @@ export default function Home() {
         const spriteY = enemy.y - 25 + squash + sink;
         ctx.save();
         ctx.globalAlpha = !enemy.alive ? Math.max(0, 1 - stompDissolve * 1.15) : 1;
-        const enemyFrame = useForestSlime ? Math.floor(frame / 2) : !enemy.alive ? Math.min(5, Math.floor((999999 - enemy.dead) / 9)) : Math.floor(frame / 2);
-        const drawn = drawSprite(anim, enemyFrame, enemy.x - 20, spriteY, 88, spriteHeight, useForestSlime ? 1 : -enemy.dir);
+        const frameOffset = enemy.pause + enemy.wander;
+        const enemyFrame = useForestSlime || map.biome === "ice" ? Math.floor((frame + frameOffset) / (60 / 30)) : !enemy.alive ? Math.min(5, Math.floor((999999 - enemy.dead + frameOffset) / 9)) : Math.floor((frame + frameOffset) / (60 / 30));
+        const drawn = useForestSlime
+          ? drawSprite(anim, enemyFrame, enemy.x - 20, spriteY, 88, spriteHeight, 1)
+          : drawSpritePreserveAspect(anim, enemyFrame, enemy.x + enemy.w / 2, spriteY + spriteHeight / 2, map.biome === "ice" || map.biome === "forest" ? 104 : map.biome === "haunted" ? 124 : map.biome === "desert" ? 118 : 112, map.biome === "ice" || map.biome === "forest" ? 78 : map.biome === "haunted" ? 96 : map.biome === "desert" ? 92 : 88, -enemy.dir, 5);
         if (!drawn) {
           drawRect(enemy.x, enemy.y + 12 + squash, enemy.w, Math.max(12, enemy.h - 12 - squash), enemy.hurt > 0 ? "#ff78a5" : "#8b3f9f");
           drawRect(enemy.x + 8, enemy.y + squash, enemy.w - 16, Math.max(8, 20 - squash / 2), "#b761c9");
@@ -3753,9 +4332,16 @@ export default function Home() {
       });
 
       if (!map.finalCastle) drawForestExit(map.goal, map.id);
-      if (boss.current) drawBoss(boss.current, frame, p.x);
+      if (map.finalCastle && boss.current?.defeated) drawNextWorldPortal(map.goal, map.biome);
+      if (boss.current?.biome === "forest") drawBossHealth(boss.current);
+      if (boss.current && boss.current.biome !== "volcano") drawBoss(boss.current, frame, p.x);
       bossProjectiles.current.forEach((shot) => {
         if (shot.kind !== "fire") return;
+        if (level.current.biome === "forest") return;
+        if (level.current.biome === "haunted" && hauntedSpellImage.current?.complete) {
+          const angle = Math.atan2(shot.vy, shot.vx);
+          if (drawImagePreserveAspectRotated(hauntedSpellImage.current, shot.x + shot.w / 2, shot.y + shot.h / 2, 44, 44, angle)) return;
+        }
         const x = shot.x - camera.current;
         const flame = ctx.createRadialGradient(x + shot.w * 0.38, shot.y + shot.h * 0.42, 2, x + shot.w / 2, shot.y + shot.h / 2, shot.w * 0.78);
         flame.addColorStop(0, "#fff1a6");
@@ -3769,6 +4355,19 @@ export default function Home() {
         ctx.fillRect(shot.vx >= 0 ? x - 16 : x + shot.w - 2, shot.y + shot.h / 2 - 3, 18, 6);
       });
 
+      const playerVisualYOffset =
+        isWorldOneLevel(map.id) &&
+        p.grounded &&
+        map.platforms.some(
+          (plat) =>
+            plat.y < 430 &&
+            Math.abs(p.y + p.h - plat.y) <= 3 &&
+            p.x + p.w > plat.x + 6 &&
+            p.x < plat.x + plat.w - 6,
+        )
+          ? -5
+          : 0;
+      const playerDrawY = p.y - playerVisualYOffset;
       const playerAnim: AnimName =
         p.dead > 0 || gameOver
           ? "dead"
@@ -3794,11 +4393,10 @@ export default function Home() {
       const meleeRight = playerAnim === "kick" && p.face > 0;
       const meleeLeft = playerAnim === "kick" && p.face < 0;
       const sitting = keys.current.sit && p.grounded && p.attack <= 0 && p.dead <= 0 && !gameOver;
-      const firing = keys.current.fire && p.attack <= 0 && p.dead <= 0 && p.hurt <= 0 && !gameOver;
+      const firing = (keys.current.fire || p.fireCooldown > 8) && p.attack <= 0 && p.dead <= 0 && p.hurt <= 0 && !gameOver;
       const meleeLeftNeutral =
         playerAnim === "idle" &&
         p.face < 0 &&
-        lastMeleeDirection.current < 0 &&
         frame < meleeNeutralUntilFrame.current &&
         !keys.current.left &&
         !keys.current.right &&
@@ -3807,7 +4405,6 @@ export default function Home() {
       const meleeRightNeutral =
         playerAnim === "idle" &&
         p.face > 0 &&
-        lastMeleeDirection.current > 0 &&
         frame < meleeNeutralUntilFrame.current &&
         !keys.current.left &&
         !keys.current.right &&
@@ -3827,7 +4424,7 @@ export default function Home() {
         const drawH = 104;
         const playerCenterX = p.x + p.w / 2;
         const drawX = playerCenterX - (visibleCenterX / sourceWidth) * drawW;
-        return drawSprite(anim, spriteFrame, drawX, p.y + p.h - drawH, drawW, drawH, 1);
+        return drawSprite(anim, spriteFrame, drawX, playerDrawY + p.h - drawH, drawW, drawH, 1);
       };
       const playerDrawn = firing
         ? p.face > 0
@@ -3865,12 +4462,21 @@ export default function Home() {
         ? drawCenteredPlayerSprite("runRight", playerFrame, 824, 412)
         : runLeft
           ? drawCenteredPlayerSprite("runLeft", playerFrame, 824, 412)
-        : drawSprite(playerAnim, playerFrame, p.x - 35, p.y - 32, 114, 104, -p.face, playerAnim === "dead");
+        : playerAnim === "dead"
+          ? drawCenteredPlayerSprite(p.deadFall ? (p.face > 0 ? "alexPitFallRight" : "alexPitFallLeft") : p.face > 0 ? "alexDeadRight" : "alexDeadLeft", Math.floor(playerFrame / (60 / 11.8)), 1440, 720)
+        : playerAnim === "hurt"
+          ? drawCenteredPlayerSprite(p.face > 0 ? "alexHurtRight" : "alexHurtLeft", 0, 1440, 720)
+        : drawSprite(playerAnim, playerFrame, p.x - 35, playerDrawY - 32, 114, 104, -p.face, false);
       if (!playerDrawn) drawFallbackHero(p);
+      if (boss.current?.biome === "volcano") drawBoss(boss.current, frame, p.x);
       if (p.freeze > 0) {
-        ctx.fillStyle = "rgba(169,238,255,.22)";
-        ctx.fillRect(Math.round(p.x - 5 - camera.current), Math.round(p.y - 4), p.w + 10, p.h + 8);
+        const freezeImage = p.face < 0 ? icePlayerFreezeImages.current.left : icePlayerFreezeImages.current.right;
+        if (!freezeImage || !drawImagePreserveAspect(freezeImage, p.x + p.w / 2, playerDrawY + p.h / 2 + 2, p.w + 54, p.h + 42, 1)) {
+          ctx.fillStyle = "rgba(169,238,255,.22)";
+          ctx.fillRect(Math.round(p.x - 5 - camera.current), Math.round(playerDrawY - 4), p.w + 10, p.h + 8);
+        }
       }
+      if (map.finalCastle && boss.current?.defeated) drawNextWorldPortal(map.goal, map.biome, true);
 
       if (p.land > 0) {
         ctx.fillStyle = `rgba(255,255,255,${p.land / 18})`;
@@ -3879,29 +4485,96 @@ export default function Home() {
         ctx.fill();
       }
 
-      ctx.fillStyle = "rgba(8,14,20,.62)";
+      ctx.fillStyle = "rgba(8,14,20,.34)";
       ctx.fillRect(0, 0, WIDTH, 54);
-      drawHudIcon(28, 28, "coin");
-      drawHudIcon(160, 28, "heart");
-      drawHudIcon(292, 28, "fire");
-      drawHudIcon(372, 28, "sound");
+      const drawCanvasButton = (image: HTMLImageElement | null, cssX: number, cssY: number) => {
+        if (!image?.complete || !image.naturalWidth) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        const canvasScale = canvasRect.width > 0 ? WIDTH / canvasRect.width : 1;
+        const x = cssX * canvasScale;
+        const y = cssY * canvasScale;
+        const box = 200 * canvasScale;
+        const scale = Math.min(box / image.naturalWidth, box / image.naturalHeight);
+        const drawW = image.naturalWidth * scale;
+        const drawH = image.naturalHeight * scale;
+        ctx.save();
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(image, x + (box - drawW) / 2, y + (box - drawH) / 2, drawW, drawH);
+        ctx.restore();
+      };
+      drawCanvasButton(soundOn ? canvasButtonImages.current.musicOn : canvasButtonImages.current.musicOff, -10, -28);
+      drawCanvasButton(canvasButtonImages.current.exit, 104, -28);
+      drawCanvasButton(canvasButtonImages.current.restart, 245, -28);
+      drawHudIcon(376, 43, "fire");
       ctx.fillStyle = "#fff";
-      ctx.font = "800 23px Arial";
-      ctx.fillText(`${hud.coins}`, 49, 36);
-      ctx.fillText(`${hud.lives}`, 181, 36);
-      ctx.font = "700 18px Arial";
-      ctx.fillText(`${p.fire}`, 324, 35);
-      ctx.fillText(soundOn ? "Music" : "Muted", 390, 35);
-      ctx.fillStyle = "rgba(255,255,255,.22)";
-      ctx.fillRect(465, 18, 118, 18);
-      ctx.fillStyle = p.power > 55 ? "#7af0a5" : p.power > 25 ? "#ffd34e" : "#ff4d58";
-      ctx.fillRect(468, 21, Math.max(0, (p.power / MAX_POWER) * 112), 12);
-      ctx.strokeStyle = "rgba(255,255,255,.55)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(465, 18, 118, 18);
-      ctx.fillStyle = "#fff";
-      ctx.font = "700 13px Arial";
-      ctx.fillText("Power", 503, 32);
+      ctx.font = "900 20px Trebuchet MS, Arial Black, Arial";
+      ctx.textAlign = "center";
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = "rgba(0,0,0,.9)";
+      ctx.strokeText(`${p.fire}`, 376, 94);
+      ctx.fillText(`${p.fire}`, 376, 94);
+      ctx.textAlign = "left";
+
+      const healthBorder = alexHealthHudImages.current.border;
+      const healthFill = alexHealthHudImages.current.fill;
+      const healthRatio = Math.max(0, Math.min(1, p.power / MAX_POWER));
+      const barX = 510;
+      const barY = 58;
+      const barW = 340;
+      const barH = 39;
+      if (healthBorder?.complete && healthBorder.naturalWidth && healthFill?.complete && healthFill.naturalWidth) {
+        const fillOffsetX = Math.round(barW * 0.102);
+        const fillOffsetY = Math.round(barH * 0.212);
+        const fillW = Math.round(barW * 0.8);
+        const fillH = Math.round(barH * 0.55);
+        const erasedRatio = 1 - healthRatio;
+        const visibleFillW = fillW * healthRatio;
+        if (visibleFillW > 0) {
+          ctx.drawImage(
+            healthFill,
+            ALEX_HEALTH_FILL_CROP.x + ALEX_HEALTH_FILL_CROP.w * erasedRatio,
+            ALEX_HEALTH_FILL_CROP.y,
+            ALEX_HEALTH_FILL_CROP.w * healthRatio,
+            ALEX_HEALTH_FILL_CROP.h,
+            barX + fillOffsetX + fillW * erasedRatio,
+            barY + fillOffsetY,
+            visibleFillW,
+            fillH,
+          );
+        }
+        ctx.drawImage(healthBorder, ALEX_HEALTH_BORDER_CROP.x, ALEX_HEALTH_BORDER_CROP.y, ALEX_HEALTH_BORDER_CROP.w, ALEX_HEALTH_BORDER_CROP.h, barX, barY, barW, barH);
+      } else {
+        ctx.fillStyle = "rgba(255,255,255,.22)";
+        ctx.fillRect(barX, barY, barW, barH);
+        ctx.fillStyle = p.power > 55 ? "#7af0a5" : p.power > 25 ? "#ffd34e" : "#ff4d58";
+        ctx.fillRect(barX + barW * (1 - healthRatio), barY + 8, barW * healthRatio, barH - 16);
+      }
+
+      const hurtHudIndex = p.power <= 0 ? 3 : p.power <= MAX_POWER * 0.4 ? 2 : p.power <= MAX_POWER * 0.7 ? 1 : 0;
+      const hurtHudImage = hurtHudImages.current[hurtHudIndex];
+      if (hurtHudImage?.complete && hurtHudImage.naturalWidth) {
+        const hurtSize = 124;
+        ctx.drawImage(
+          hurtHudImage,
+          CANVAS_HURT_HUD_CROP.x,
+          CANVAS_HURT_HUD_CROP.y,
+          CANVAS_HURT_HUD_CROP.w,
+          CANVAS_HURT_HUD_CROP.h,
+          WIDTH - hurtSize - 16,
+          16,
+          hurtSize,
+          hurtSize,
+        );
+      }
+      if (boss.current?.active && boss.current.alive && !boss.current.defeated && boss.current.biome === "forest") {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, WIDTH, 260);
+        ctx.clip();
+        drawBoss(boss.current, frame, p.x);
+        ctx.restore();
+      }
       const activeBoss = boss.current;
       if (activeBoss?.active && activeBoss.biome === "ice" && activeBoss.health <= Math.ceil(activeBoss.maxHealth * 0.3) && activeBoss.alive) {
         ctx.fillStyle = "rgba(229,249,255,.1)";
@@ -3954,24 +4627,7 @@ export default function Home() {
             p.vy += GRAVITY;
             p.y += p.vy;
             p.x = Math.max(0, Math.min(LEVEL_END, p.x));
-
-            const allSolids = [...map.platforms, ...map.bridges, ...bossPillars.current, ...movingLifts.current];
-            let landed = false;
-            allSolids.forEach((plat) => {
-              if (!landed && overlaps(p, plat) && p.vy >= 0 && p.y + p.h - p.vy <= plat.y + 8) {
-                p.y = plat.y - p.h;
-                p.vy = 0;
-                p.grounded = true;
-                p.deadFall = false;
-                landed = true;
-              }
-            });
-            if (!landed && p.y + p.h >= HEIGHT - 56) {
-              p.y = HEIGHT - 56 - p.h;
-              p.vy = 0;
-              p.grounded = true;
-              p.deadFall = false;
-            }
+            p.grounded = false;
           }
           draw();
           raf.current = requestAnimationFrame(tick);
@@ -3992,23 +4648,26 @@ export default function Home() {
           playSound("jump");
         }
         if (keys.current.kick && p.attack <= 0) {
+          keys.current.kick = false;
+          meleeFrameChoice.current = nextMeleeFrame.current;
+          nextMeleeFrame.current = (nextMeleeFrame.current + 1) % 2;
           p.attack = 18;
-          lastMeleeDirection.current = p.face < 0 ? -1 : 1;
           meleeNeutralUntilFrame.current = 0;
           playSound("kick");
         }
         if (keys.current.fire && p.fire > 0 && p.fireCooldown <= 0) {
-          const fireY = p.y + (sitting ? 36 : 22);
+          const fireCenterX = p.x + p.w / 2 + p.face * PLAYER_FIRE_MUZZLE_X;
+          const fireCenterY = p.y + PLAYER_FIRE_MUZZLE_Y;
           projectiles.current.push({
-            x: p.x + (p.face > 0 ? p.w : -22),
-            y: fireY,
-            w: 18,
-            h: 18,
+            x: fireCenterX - PLAYER_FIRE_SIZE / 2,
+            y: fireCenterY - PLAYER_FIRE_SIZE / 2,
+            w: PLAYER_FIRE_SIZE,
+            h: PLAYER_FIRE_SIZE,
             vx: p.face * 9,
             life: 70,
           });
           p.fire -= 1;
-          p.fireCooldown = 18;
+          p.fireCooldown = 22;
           playFireSound();
         }
         const previousAttack = p.attack;
@@ -4091,7 +4750,7 @@ export default function Home() {
         map.powerUps.forEach((powerUp) => {
           if (!powerUp.taken && overlaps(p, powerUp)) {
             powerUp.taken = true;
-            p.fire += 5;
+            p.fire += powerUp.amount ?? 5;
             playSound("powerup");
             setHud((value) => ({ ...value, message: "Fire power ready" }));
           }
@@ -4114,10 +4773,6 @@ export default function Home() {
           if (levelTransition.current) return;
           const currentBoss = boss.current;
           if (map.finalCastle && currentBoss && !currentBoss.defeated) return;
-          if (map.finalCastle && currentBoss && (!map.bossDiamond || !map.bossDiamond.taken)) {
-            setHud((value) => ({ ...value, message: "Collect the guardian diamond to open the next stage" }));
-            return;
-          }
           levelTransition.current = true;
           playSound("win");
           setWon(true);
@@ -4413,6 +5068,8 @@ export default function Home() {
                   const dy = targetY - mouthY;
                   const distance = Math.max(1, Math.hypot(dx, dy));
                   const speed = 8.4;
+                  const dragonShootsFromRightSide = bossState.x + bossState.w / 2 > (BOSS_ARENA_LEFT + BOSS_ARENA_RIGHT) / 2;
+                  const dragonFireDirection = dragonShootsFromRightSide ? "left" : "right";
                   bossProjectiles.current.push({
                     x: mouthX - 14,
                     y: mouthY - 14,
@@ -4422,6 +5079,7 @@ export default function Home() {
                     vy: (dy / distance) * speed,
                     life: 150,
                     kind: "fire",
+                    fireDirection: dragonFireDirection,
                   });
                   bossState.breathShots -= 1;
                   beep(150, 0.07, "sawtooth", 0.08, -42);
@@ -4893,23 +5551,181 @@ export default function Home() {
               }
             }
           } else {
+            type ExtraBossState = Boss & { customTimer?: number; customCount?: number; customBatch?: number; customDir?: number; customMode?: string };
+            const extraBoss = bossState as ExtraBossState;
             bossState.attackTimer = Math.max(0, bossState.attackTimer - 1);
             bossState.vulnerable = Math.max(0, bossState.vulnerable - 1);
             bossState.slam = Math.max(0, bossState.slam - 1);
             bossState.hurt = Math.max(0, bossState.hurt - 1);
-            if (bossState.attackTimer <= 0) {
+            const arenaLeft = Math.max(0, camera.current + 28);
+            const arenaRight = Math.min(LEVEL_END - bossState.w, camera.current + WIDTH - bossState.w - 28);
+            const playerCenter = p.x + p.w / 2;
+            const bossCenter = bossState.x + bossState.w / 2;
+            const facePlayer = playerCenter >= bossCenter ? 1 : -1;
+            bossState.face = facePlayer;
+
+            if (bossState.biome === "volcano") {
+              if (!extraBoss.customMode) {
+                extraBoss.customMode = "idle";
+                extraBoss.customTimer = 62;
+                extraBoss.customCount = 0;
+                extraBoss.customDir = bossState.x < (arenaLeft + arenaRight) / 2 ? 1 : -1;
+              }
+              if (extraBoss.customMode === "idle") {
+                bossState.phase = "idle";
+                bossState.vx = 0;
+                extraBoss.customTimer = Math.max(0, (extraBoss.customTimer ?? 0) - 1);
+                if ((extraBoss.customTimer ?? 0) <= 0) {
+                  extraBoss.customMode = "stones";
+                  extraBoss.customTimer = 1;
+                  extraBoss.customCount = 0;
+                  bossState.phase = "clawing";
+                }
+              } else if (extraBoss.customMode === "stones") {
+                bossState.phase = "clawing";
+                bossState.vx = 0;
+                extraBoss.customTimer = Math.max(0, (extraBoss.customTimer ?? 0) - 1);
+                if ((extraBoss.customTimer ?? 0) <= 0 && (extraBoss.customCount ?? 0) < 10) {
+                  const spawnX = bossState.x + (bossState.face > 0 ? bossState.w + 16 : -34);
+                  const spawnY = bossState.groundY + bossState.h - 14;
+                  const targetX = p.x + p.w / 2;
+                  const targetY = p.y + p.h / 2;
+                  const dx = targetX - spawnX;
+                  const dy = targetY - spawnY;
+                  const dist = Math.max(1, Math.hypot(dx, dy));
+                  const speed = 5.2;
+                  bossProjectiles.current.push({ x: spawnX - 21, y: spawnY - 21, w: 42, h: 42, vx: (dx / dist) * speed, vy: (dy / dist) * speed - 1.2, life: 145, kind: "shard" });
+                  extraBoss.customCount = (extraBoss.customCount ?? 0) + 1;
+                  extraBoss.customTimer = 12;
+                }
+                if ((extraBoss.customCount ?? 0) >= 10 && !bossProjectiles.current.some((shot) => shot.kind === "shard")) {
+                  const topPlatform = map.platforms.filter((platform) => platform.y < 360).sort((a, b) => a.y - b.y)[0];
+                  if (topPlatform) map.powerUps.push({ x: topPlatform.x + topPlatform.w / 2 - 14, y: topPlatform.y - 36, w: 28, h: 28, kind: "fire" });
+                  extraBoss.customMode = "run";
+                  extraBoss.customDir = bossState.x < (arenaLeft + arenaRight) / 2 ? 1 : -1;
+                  bossState.phase = "chasing";
+                }
+              } else if (extraBoss.customMode === "run") {
+                bossState.phase = "chasing";
+                const dir = extraBoss.customDir ?? 1;
+                bossState.face = dir;
+                bossState.vx = dir * 2.2;
+                bossState.x += bossState.vx;
+                if ((dir > 0 && bossState.x >= arenaRight) || (dir < 0 && bossState.x <= arenaLeft)) {
+                  bossState.x = dir > 0 ? arenaRight : arenaLeft;
+                  bossState.vx = 0;
+                  extraBoss.customMode = "idle";
+                  extraBoss.customTimer = 62;
+                  bossState.phase = "idle";
+                }
+              }
+            } else if (bossState.biome === "desert") {
+              if (!extraBoss.customMode) {
+                extraBoss.customMode = "run";
+                extraBoss.customBatch = 1 + Math.floor(Math.random() * 8);
+                extraBoss.customCount = 0;
+                extraBoss.customDir = -1;
+              }
+              if (extraBoss.customMode === "run") {
+                bossState.phase = "chasing";
+                const dir = extraBoss.customDir ?? -1;
+                bossState.face = dir;
+                bossState.vx = dir * 3.2;
+                bossState.x += bossState.vx;
+                if ((dir < 0 && bossState.x <= arenaLeft) || (dir > 0 && bossState.x >= arenaRight)) {
+                  bossState.x = dir < 0 ? arenaLeft : arenaRight;
+                  extraBoss.customCount = (extraBoss.customCount ?? 0) + 1;
+                  extraBoss.customDir = -dir;
+                  if ((extraBoss.customCount ?? 0) >= (extraBoss.customBatch ?? 1)) {
+                    extraBoss.customMode = "tied";
+                    extraBoss.customTimer = 180;
+                    bossState.vulnerable = 180;
+                    bossState.phase = "vulnerable";
+                  }
+                }
+              } else if (extraBoss.customMode === "tied") {
+                bossState.phase = "vulnerable";
+                bossState.vx = 0;
+                bossState.vulnerable = Math.max(bossState.vulnerable, 1);
+                extraBoss.customTimer = Math.max(0, (extraBoss.customTimer ?? 0) - 1);
+                if ((extraBoss.customTimer ?? 0) <= 0) {
+                  extraBoss.customMode = "untide";
+                  extraBoss.customTimer = 54;
+                  bossState.vulnerable = 0;
+                }
+              } else if (extraBoss.customMode === "untide") {
+                bossState.phase = "idle";
+                bossState.vx = 0;
+                extraBoss.customTimer = Math.max(0, (extraBoss.customTimer ?? 0) - 1);
+                if ((extraBoss.customTimer ?? 0) <= 0) {
+                  extraBoss.customMode = "arrow";
+                  extraBoss.customTimer = 62;
+                }
+              } else if (extraBoss.customMode === "arrow") {
+                bossState.phase = "clawing";
+                extraBoss.customTimer = Math.max(0, (extraBoss.customTimer ?? 0) - 1);
+                if ((extraBoss.customTimer ?? 0) <= 0) {
+                  extraBoss.customMode = "run";
+                  extraBoss.customBatch = 1 + Math.floor(Math.random() * 8);
+                  extraBoss.customCount = 0;
+                }
+              }
+            } else if (bossState.biome === "haunted") {
+              if (!extraBoss.customMode) {
+                extraBoss.customMode = "idle";
+                extraBoss.customTimer = 62;
+                extraBoss.customCount = 0;
+              }
+              if (extraBoss.customMode === "idle") {
+                bossState.phase = "idle";
+                extraBoss.customTimer = Math.max(0, (extraBoss.customTimer ?? 0) - 1);
+                if ((extraBoss.customTimer ?? 0) <= 0) {
+                  extraBoss.customMode = "magic";
+                  extraBoss.customTimer = 1;
+                  extraBoss.customCount = 0;
+                }
+              } else if (extraBoss.customMode === "magic") {
+                bossState.phase = "clawing";
+                extraBoss.customTimer = Math.max(0, (extraBoss.customTimer ?? 0) - 1);
+                if ((extraBoss.customTimer ?? 0) <= 0 && (extraBoss.customCount ?? 0) < 12) {
+                  const spawnX = bossState.x + bossState.w / 2;
+                  const spawnY = bossState.y + bossState.h * 0.35;
+                  const dx = p.x + p.w / 2 - spawnX;
+                  const dy = p.y + p.h / 2 - spawnY;
+                  const dist = Math.max(1, Math.hypot(dx, dy));
+                  bossProjectiles.current.push({ x: spawnX - 14, y: spawnY - 14, w: 28, h: 28, vx: (dx / dist) * 5.8, vy: (dy / dist) * 5.8, life: 150, kind: "fire" });
+                  extraBoss.customCount = (extraBoss.customCount ?? 0) + 1;
+                  extraBoss.customTimer = 18;
+                }
+                if ((extraBoss.customCount ?? 0) >= 12) {
+                  extraBoss.customMode = "ghost";
+                  extraBoss.customTimer = 90;
+                  bossState.phase = "jumping";
+                }
+              } else if (extraBoss.customMode === "ghost") {
+                bossState.phase = "jumping";
+                extraBoss.customTimer = Math.max(0, (extraBoss.customTimer ?? 0) - 1);
+                if ((extraBoss.customTimer ?? 0) <= 0) {
+                  extraBoss.customMode = "idle";
+                  extraBoss.customTimer = 62;
+                  bossState.x = bossState.x > (arenaLeft + arenaRight) / 2 ? arenaLeft : arenaRight;
+                  bossState.face = bossState.x < (arenaLeft + arenaRight) / 2 ? 1 : -1;
+                }
+              }
+            } else if (bossState.attackTimer <= 0) {
               bossState.slam = 28;
               bossState.vulnerable = 95;
               bossState.attackTimer = 165;
               setHud((value) => ({ ...value, message: "Weakness: fire during the cracked armor window" }));
             }
+            bossState.x = Math.max(arenaLeft, Math.min(arenaRight, bossState.x));
           }
           const hitShot = projectiles.current.find((shot) => overlaps(shot, bossState));
           const swordHit = p.attack > 5 && overlaps(kickBox, bossState);
           const stompHit = wasFalling && previousY + p.h <= bossState.y + 18 && overlaps(p, bossState);
-          const canDamageWithSword = bossState.biome === "ice" ? swordHit && bossState.vulnerable > 0 : swordHit;
+          const canDamageWithSword = bossState.biome === "ice" || bossState.biome === "desert" ? swordHit && bossState.vulnerable > 0 : swordHit;
           const canDamageWithStomp = bossState.biome === "ice" ? stompHit && bossState.vulnerable > 0 : stompHit;
-          const canDamageWithFire = Boolean(hitShot) && (bossState.biome === "forest" || bossState.biome === "ice" || bossState.vulnerable > 0);
+          const canDamageWithFire = Boolean(hitShot) && (bossState.biome === "forest" || bossState.biome === "ice" || bossState.biome === "volcano" || bossState.biome === "haunted" || bossState.vulnerable > 0);
           const bossWasHit = canDamageWithSword || canDamageWithStomp || canDamageWithFire;
           if (bossWasHit && bossState.hurt <= 0) {
             if (hitShot) hitShot.life = 0;
@@ -4931,21 +5747,17 @@ export default function Home() {
               bossState.phase = "defeated";
               bossState.deathFrame = 0;
               bossState.dissolve = 70;
-              map.bossDiamond = {
-                x: bossState.x + bossState.w / 2 - 18,
-                y: Math.max(90, bossState.y + bossState.h / 2 - 22),
-                w: 36,
-                h: 44,
-                active: true,
-                taken: false,
-                pulse: performance.now() * 0.01,
-              };
+              const bossDiedOnRight = bossState.x + bossState.w / 2 > (BOSS_ARENA_LEFT + BOSS_ARENA_RIGHT) / 2;
+              map.goal = bossDiedOnRight
+                ? { x: BOSS_ARENA_LEFT + 26, y: 218, w: 190, h: 250 }
+                : { x: BOSS_ARENA_RIGHT - 226, y: 218, w: 190, h: 250 };
+              map.bossDiamond = undefined;
               stopBossMusic();
               beep(46, 0.34, "sawtooth", 0.14, -18);
               window.setTimeout(() => beep(34, 0.28, "square", 0.1, -8), 130);
-              setHud((value) => ({ ...value, message: `${biomeStyle(bossState.biome).boss} defeated. Collect the diamond.` }));
+              setHud((value) => ({ ...value, message: `${biomeStyle(bossState.biome).boss} defeated. Enter the portal.` }));
               window.setTimeout(() => {
-                if (!map.bossDiamond?.taken) setHud((value) => ({ ...value, message: "Take the guardian diamond to clear the stage" }));
+                if (!levelTransition.current) setHud((value) => ({ ...value, message: "Enter the portal to clear the stage" }));
               }, bossState.biome === "forest" ? 1800 : 900);
             }
           } else if (hitShot && bossState.vulnerable <= 0) {
@@ -4953,11 +5765,12 @@ export default function Home() {
             setHud((value) => ({ ...value, message: bossState.biome === "ice" ? "Fire melts armor. Keep shooting." : "No damage. Wait for the weak point." }));
           }
           const forestClawActive = bossState.biome === "forest" && bossState.meleeWindup > 0;
-          if (bossState.biome !== "forest" && overlaps(p, bossState) && bossState.hurt <= 0 && !bossWasHit && !forestClawActive) damagePlayer(20, bossState.x + bossState.w / 2);
+          if (bossState.biome !== "forest" && overlaps(p, bossState) && bossState.hurt <= 0 && !bossWasHit && !forestClawActive) damagePlayer(bossState.biome === "ice" ? 32 : 20, bossState.x + bossState.w / 2);
         }
         if (bossState?.active && bossState.phase === "defeated") {
           const forestDeathFrames = bossState.face >= 0 ? ROOT_GUARDIAN_SPRITES.deadLeft : ROOT_GUARDIAN_SPRITES.deadRight;
-          const maxDeathFrame = bossState.biome === "forest" ? forestDeathFrames.length - 1 : FROST_WARDEN_SPRITES.dead.length - 1;
+          const importedDeathFrames = IMPORTED_BOSS_SPRITES[bossState.biome]?.dead?.[bossState.face >= 0 ? "right" : "left"];
+          const maxDeathFrame = bossState.biome === "forest" ? forestDeathFrames.length - 1 : importedDeathFrames?.length ? importedDeathFrames.length - 1 : FROST_WARDEN_SPRITES.dead.length - 1;
           if (bossState.deathFrame < maxDeathFrame) {
             const frameAdvance = bossState.biome === "forest" ? 0.32 : 0.26;
             bossState.deathFrame = Math.min(maxDeathFrame, bossState.deathFrame + frameAdvance);
@@ -4982,7 +5795,7 @@ export default function Home() {
                 setHud((value) => ({ ...value, message: "Dragon fire grazed Alex. Power is critical." }));
               }
             } else {
-              damagePlayer(shot.kind === "wave" ? 20 : 16, shot.x + shot.w / 2);
+              damagePlayer(boss.current?.biome === "ice" && shot.kind === "shard" ? 5 : shot.kind === "wave" ? 20 : 16, shot.x + shot.w / 2);
             }
             shot.life = 0;
           }
@@ -5093,6 +5906,10 @@ export default function Home() {
             p.land = 12;
             return;
           }
+          if (p.attack > 5 && overlaps(kickBox, enemy)) {
+            poofFlyingEnemy(enemy);
+            return;
+          }
           if (overlaps(p, enemy)) damagePlayer(ENEMY_DAMAGE, enemy.x + enemy.w / 2);
         });
         projectiles.current = projectiles.current.filter((shot) => shot.life > 0);
@@ -5163,6 +5980,58 @@ export default function Home() {
     startAudio();
     keys.current[key] = active;
   };
+
+  const imagePixelIsOpaque = (image: HTMLImageElement, clientX: number, clientY: number) => {
+    if (!image.complete || !image.naturalWidth || !image.naturalHeight) return false;
+    const rect = image.getBoundingClientRect();
+    const scale = Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight);
+    const drawW = image.naturalWidth * scale;
+    const drawH = image.naturalHeight * scale;
+    const offsetX = (rect.width - drawW) / 2;
+    const offsetY = (rect.height - drawH) / 2;
+    const localX = clientX - rect.left - offsetX;
+    const localY = clientY - rect.top - offsetY;
+    if (localX < 0 || localY < 0 || localX > drawW || localY > drawH) return false;
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return false;
+    context.drawImage(image, 0, 0);
+    const pixelX = Math.max(0, Math.min(image.naturalWidth - 1, Math.floor(localX / scale)));
+    const pixelY = Math.max(0, Math.min(image.naturalHeight - 1, Math.floor(localY / scale)));
+    return context.getImageData(pixelX, pixelY, 1, 1).data[3] > 18;
+  };
+
+  const handleCanvasButtonPress = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      event.stopPropagation();
+      event.preventDefault();
+      const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".hud-image-button")).reverse();
+      for (const button of buttons) {
+        const image = button.querySelector("img");
+        if (!image || !imagePixelIsOpaque(image, event.clientX, event.clientY)) continue;
+        const action = button.dataset.canvasButton;
+        if (action === "music") {
+          if (soundOn) stopAudio();
+          else startAudio(true);
+        } else if (action === "menu") {
+          returnToMenu();
+        } else if (action === "restart") {
+          restart();
+        }
+        return;
+      }
+    },
+    [returnToMenu, restart, soundOn, startAudio, stopAudio],
+  );
+  const openMenuOptions = () => setMenuScreen("options");
+  const closeRunningGame = () => {
+    if (typeof window !== "undefined") {
+      window.close();
+      setHud((value) => ({ ...value, message: "Close requested" }));
+    }
+  };
   const clickFire = () => {
     if (screen !== "playing" || pausedRef.current) return;
     startAudio();
@@ -5172,17 +6041,66 @@ export default function Home() {
     }, 90);
   };
 
+  const updateMoveStick = (event: PointerEvent<HTMLDivElement>, starting: boolean) => {
+    if (screen !== "playing" || pausedRef.current) return;
+    event.stopPropagation();
+    event.preventDefault();
+    if (starting) {
+      moveStickPointerId.current = event.pointerId;
+    } else if (moveStickPointerId.current !== event.pointerId || !moveStickRef.current.active) {
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const liveStick = moveStickRef.current;
+    const originX = starting || !liveStick.active ? pointerX : liveStick.x;
+    const originY = starting || !liveStick.active ? pointerY : liveStick.y;
+    const dx = pointerX - originX;
+    const dy = pointerY - originY;
+    const threshold = 12;
+    startAudio();
+    keys.current.left = dx < -threshold;
+    keys.current.right = dx > threshold;
+    keys.current.jump = false;
+    keys.current.sit = dy > threshold;
+    const nextStick = {
+      active: true,
+      x: originX,
+      y: originY,
+      dx: Math.max(-36, Math.min(36, dx)),
+      dy: Math.max(-36, Math.min(36, dy)),
+    };
+    moveStickRef.current = nextStick;
+    setMoveStick(nextStick);
+  };
+
+  const stopMoveStick = () => {
+    keys.current.left = false;
+    keys.current.right = false;
+    keys.current.sit = false;
+    moveStickPointerId.current = null;
+    moveStickRef.current = { ...moveStickRef.current, active: false, dx: 0, dy: 0 };
+    setMoveStick(moveStickRef.current);
+  };
+
   return (
     <main className="game-shell">
-      <section className="game-stage" aria-label="Alex Kido Remake platform game" onClick={clickFire}>
-        <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} />
+      <section className="game-stage" aria-label="Alex Kido Remake platform game" onClick={clickFire} style={{ filter: `brightness(${gameBrightness}%)` }}>
+        <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} className={screen === "menu" ? "menu-hidden-canvas" : undefined} />
         {screen === "playing" && !gameOver && (
           <div className="top-actions" onClick={(event) => event.stopPropagation()}>
             <h1>{levelLabel}</h1>
-            <div className="top-buttons">
-              <button onClick={soundOn ? stopAudio : () => startAudio(true)}>{soundOn ? "Sound On" : "Sound Off"}</button>
-              <button onClick={returnToMenu}>Menu</button>
-              <button onClick={restart}>Restart</button>
+            <div className="top-buttons" onPointerDown={handleCanvasButtonPress}>
+              <button className="hud-image-button" data-canvas-button="music" aria-label={soundOn ? "Sound on" : "Sound off"}>
+                <img src={soundOn ? CANVAS_BUTTONS.musicOn : CANVAS_BUTTONS.musicOff} alt="" draggable={false} />
+              </button>
+              <button className="hud-image-button" data-canvas-button="menu" aria-label="Menu">
+                <img src={CANVAS_BUTTONS.exit} alt="" draggable={false} />
+              </button>
+              <button className="hud-image-button" data-canvas-button="restart" aria-label="Restart">
+                <img src={CANVAS_BUTTONS.restart} alt="" draggable={false} />
+              </button>
             </div>
           </div>
         )}
@@ -5199,13 +6117,27 @@ export default function Home() {
         )}
         {screen === "playing" && !gameOver && (
           <div className="controls" aria-label="Touch controls" onClick={(event) => event.stopPropagation()}>
-            <div className="move-pad">
-              <button onPointerDown={() => press("left", true)} onPointerUp={() => press("left", false)} onPointerLeave={() => press("left", false)}>
-                Left
-              </button>
-              <button onPointerDown={() => press("right", true)} onPointerUp={() => press("right", false)} onPointerLeave={() => press("right", false)}>
-                Right
-              </button>
+            <div
+              className="move-touch-zone"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                updateMoveStick(event, true);
+              }}
+              onPointerMove={(event) => updateMoveStick(event, false)}
+              onPointerUp={stopMoveStick}
+              onPointerCancel={stopMoveStick}
+              onPointerLeave={stopMoveStick}
+              onLostPointerCapture={stopMoveStick}
+            >
+              {moveStick.active && (
+                <div className="floating-stick" style={{ left: moveStick.x, top: moveStick.y }}>
+                  <span className="stick-arrow stick-up" />
+                  <span className="stick-arrow stick-down" />
+                  <span className="stick-arrow stick-left" />
+                  <span className="stick-arrow stick-right" />
+                  <span className="stick-knob" style={{ transform: `translate(calc(-50% + ${moveStick.dx}px), calc(-50% + ${moveStick.dy}px))` }} />
+                </div>
+              )}
             </div>
             <div className="action-pad">
               <button onPointerDown={() => press("fire", true)} onPointerUp={() => press("fire", false)} onPointerLeave={() => press("fire", false)}>
@@ -5252,25 +6184,69 @@ export default function Home() {
           </div>
         )}
         {screen === "menu" && (
-          <div className="title-screen" onClick={(event) => event.stopPropagation()}>
-            {menuScreen === "main" && (
+          <div
+            className={`title-screen canvas-menu-screen canvas-menu-${canvasIntroPhase}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (canvasIntroPhase === "touch") {
+                if (canvasMainReady) setCanvasIntroPhase("main");
+                else setPendingCanvasMain(true);
+              }
+            }}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              if (canvasIntroPhase === "touch") {
+                if (canvasMainReady) setCanvasIntroPhase("main");
+                else setPendingCanvasMain(true);
+              }
+            }}
+          >
+            {canvasIntroPhase !== "main" && (
+              <img
+                className="canvas-intro-image"
+                src={canvasIntroPhase === "logo" ? CANVAS_LOGO_SRC : CANVAS_TOUCH_SRC}
+                alt=""
+                draggable={false}
+              />
+            )}
+            {canvasIntroPhase === "main" && <img className="canvas-main-menu-image" src={CANVAS_MAIN_SRC} alt="" draggable={false} />}
+            {canvasIntroPhase === "main" && menuScreen === "main" && (
               <>
-                <div className="title-copy">
-                  <span>Castle Run</span>
-                  <h1>Alex Kido Remake</h1>
-                  <p>{hasProgress ? `Continue from ${levelLabel} or start over from 1.1.` : "Journey through 10 worlds, from forest gates to the Shadow Crown Castle."}</p>
-                </div>
-                <div className="title-menu" aria-label="Start menu">
-                  <button onClick={startNewGame}>New Game</button>
-                  <button onClick={continueGame} disabled={!hasProgress}>
-                    Continue
-                  </button>
-                  <button onClick={() => setMenuScreen("levels")}>Level Select</button>
-                  <button onClick={toggleTitleMusic}>{titleMusicOn ? "Title Music On" : "Title Music Off"}</button>
+                <div className="main-menu-touch-zones" aria-label="Main menu quick touch zones">
+                  <button className="main-menu-zone main-menu-zone-options" onClick={openMenuOptions} aria-label="Open game options" />
+                  <button className="main-menu-zone main-menu-zone-levels" onClick={() => setMenuScreen("levels")} aria-label="Open level select" />
+                  <button className="main-menu-zone main-menu-zone-close" onClick={closeRunningGame} aria-label="Close game" />
                 </div>
               </>
             )}
-            {menuScreen === "levels" && (
+            {canvasIntroPhase === "main" && menuScreen === "options" && (
+              <div className="options-panel" aria-label="Game options">
+                <div className="level-select-heading">
+                  <div>
+                    <span>Options</span>
+                    <h1>Game Settings</h1>
+                  </div>
+                  <button onClick={() => setMenuScreen("main")}>Back</button>
+                </div>
+                <label className="option-row">
+                  <span>Brightness</span>
+                  <input
+                    type="range"
+                    min="55"
+                    max="135"
+                    value={gameBrightness}
+                    onChange={(event) => setGameBrightness(Number(event.currentTarget.value))}
+                  />
+                  <strong>{gameBrightness}%</strong>
+                </label>
+                <div className="options-actions">
+                  <button onClick={() => setGameBrightness(100)}>Reset Brightness</button>
+                  <button onClick={toggleTitleMusic}>{titleMusicOn ? "Title Music On" : "Title Music Off"}</button>
+                  <button onClick={() => setMenuScreen("levels")}>Level Select</button>
+                </div>
+              </div>
+            )}
+            {canvasIntroPhase === "main" && menuScreen === "levels" && (
               <div className="level-select level-select-screen" aria-label="World and level selection">
                 <div className="level-select-heading">
                   <div>
@@ -5307,3 +6283,9 @@ export default function Home() {
     </main>
   );
 }
+
+
+
+
+
+
